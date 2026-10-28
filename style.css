@@ -140,7 +140,7 @@ details.exp p{margin:6px 0}
 .tabs button.on .ti{transform:rotate(-6deg)}
 
 /* 과목 색 띠지 (오답 모음) */
-body.list-mode main{padding-right:50px}
+@media(max-width:699px){body.list-mode main{padding-right:50px}}
 .index-tabs{position:fixed;z-index:15;top:96px;right:max(0px,calc((100vw - 760px) / 2));display:none;flex-direction:column;align-items:flex-end;gap:6px;
   max-height:calc(100vh - 190px);overflow-y:auto;scrollbar-width:none;padding:4px 0 4px 10px}
 .index-tabs::-webkit-scrollbar{display:none}
@@ -159,6 +159,29 @@ body.list-mode .index-tabs{display:flex}
 .note::before{display:none}
 .flag{position:absolute;top:-9px;left:12px;padding:0 12px 2px;background:var(--sc,#9aa3ad);color:#fff;font-weight:700;font-size:15px;
   border-radius:3px 3px 0 0;box-shadow:0 2px 0 rgba(0,0,0,.08)}
+
+/* 넓은 화면(태블릿·컴퓨터): 과목 띠지를 위쪽 가로로 (B안) */
+@media(min-width:700px){
+  main{max-width:880px}
+  body.list-mode .index-tabs{position:static;flex-direction:row;align-items:flex-end;gap:4px;max-height:none;overflow-x:auto;overflow-y:hidden;
+    padding:6px 0 0 4px;margin:4px 0 16px;border-bottom:3px solid var(--sel,var(--ink))}
+  .itab{writing-mode:horizontal-tb;width:auto;padding:6px 16px 4px;border-radius:9px 9px 0 0;letter-spacing:0;font-size:18px;
+    box-shadow:0 -1px 0 rgba(0,0,0,.05);transform:translateY(5px);transition:transform .15s,opacity .15s}
+  .itab .cnt{padding-inline-start:6px;font-size:16px}
+  .itab.on{width:auto;transform:none;padding-bottom:8px;box-shadow:0 -2px 0 rgba(0,0,0,.08)}
+  .itab.all{border:1.5px solid #d8d2c4;border-bottom:0}
+}
+
+/* 학년도 띠지 (왼쪽 여백선 옆) */
+.year-tabs{position:fixed;z-index:15;top:96px;left:0;display:none;flex-direction:column;align-items:flex-start;gap:6px;
+  max-height:calc(100vh - 190px);overflow-y:auto;scrollbar-width:none;padding:4px 8px 4px 0}
+.year-tabs::-webkit-scrollbar{display:none}
+body.list-mode .year-tabs{display:flex}
+.ytab{width:34px;border:1.5px solid #cdbf98;border-left:0;padding:8px 0 8px 2px;border-radius:0 8px 8px 0;cursor:pointer;
+  background:#efe2bd;color:#5a4a26;font-weight:700;font-size:13px;line-height:1.05;writing-mode:vertical-rl;text-orientation:upright;letter-spacing:-1px;
+  box-shadow:1px 2px 0 rgba(0,0,0,.1);opacity:.85;transition:width .15s}
+.ytab .yy{font-size:17px;text-combine-upright:all;padding-inline-end:3px}
+.ytab.on{width:42px;background:var(--ink);border-color:var(--ink);color:#fff;opacity:1;box-shadow:2px 3px 0 rgba(0,0,0,.18)}
 
 /* 함께 쓰기 */
 .people{margin:4px 0 10px;padding-left:20px}

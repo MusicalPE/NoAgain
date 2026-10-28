@@ -303,39 +303,68 @@ function noteCard(n) {
 }
 
 // ───────── 목록 ─────────
+// 학년도: 3월 ~ 다음 해 2월
+const schoolYear = (t) => { const d = new Date(t || Date.now()); return d.getMonth() >= 2 ? d.getFullYear() : d.getFullYear() - 1; };
+let listYear = null; // 처음 열 때 정함
+function yearsWithNotes() { return [...new Set(state.notes.map((n) => schoolYear(n.createdAt)))].sort((a, b) => a - b); }
+const inYear = (n, y) => y === "all" || y == null || schoolYear(n.createdAt) === +y;
+
 function renderStats() {
-  const wrong = state.notes.filter((n) => n.status !== "mastered").length;
-  const done = state.notes.length - wrong;
+  // 왼쪽 학년도 띠지
+  const years = yearsWithNotes();
+  if (listYear === null || (listYear !== "all" && !years.includes(+listYear))) {
+    const now = schoolYear();
+    listYear = years.includes(now) ? now : years.length ? years[years.length - 1] : "all";
+  }
+  $("#yearTabs").innerHTML = years.length < 1 ? "" :
+    `<button class="ytab ${listYear === "all" ? "on" : ""}" data-year="all">모든 해</button>` +
+    years.map((y) => `<button class="ytab ${+listYear === y ? "on" : ""}" data-year="${y}"><span class="yy">${String(y).slice(2)}</span>학년도</button>`).join("");
+
+  const pool = state.notes.filter((n) => inYear(n, listYear));
+  const wrong = pool.filter((n) => n.status !== "mastered").length;
+  const done = pool.length - wrong;
   const bySub = {};
-  state.notes.forEach((n) => { if (n.status !== "mastered") bySub[n.subject] = (bySub[n.subject] || 0) + 1; });
+  pool.forEach((n) => { if (n.status !== "mastered") bySub[n.subject] = (bySub[n.subject] || 0) + 1; });
   $("#stats").innerHTML = `<div class="stat red"><b>${wrong}</b>아직 틀림</div><div class="stat green"><b>${done}</b>익힘</div>`;
-  // 옆에 붙인 색 띠지
-  const subs = SUBJECTS.filter((s) => state.notes.some((n) => n.subject === s));
+  // 오른쪽 과목 색 띠지
+  const subs = SUBJECTS.filter((s) => pool.some((n) => n.subject === s));
   if (listSubject !== "all" && !subs.includes(listSubject)) listSubject = "all";
   const num = (c) => `<span class="cnt">${c || ""}</span>`;
+  $("#indexTabs").style.setProperty("--sel", listSubject === "all" ? "var(--ink)" : subjColor(listSubject));
   $("#indexTabs").innerHTML = !state.notes.length ? "" :
     `<button class="itab all ${listSubject === "all" ? "on" : ""}" data-sub="all">전체${num(wrong)}</button>` +
     subs.map((s) => `<button class="itab ${listSubject === s ? "on" : ""}" data-sub="${esc(s)}" style="background:${subjColor(s)}">${esc(s)}${num(bySub[s])}</button>`).join("");
 }
-function filtered({ subject, status, similar, search = "" }) {
+function filtered({ subject, status, similar, search = "", year = "all" }) {
   const q = search.trim().toLowerCase();
   return state.notes.filter((n) =>
+    inYear(n, year) &&
     (subject === "all" || n.subject === subject) &&
     (status === "all" || (status === "mastered" ? n.status === "mastered" : n.status !== "mastered")) &&
     (similar || n.source !== "ai") &&
     (!q || [n.question, n.unit, n.type].join(" ").toLowerCase().includes(q)));
 }
+function fillYearSelect(sel) {
+  const cur = sel.value || String(listYear ?? "all");
+  sel.innerHTML = `<option value="all">모든 해</option>` + yearsWithNotes().map((y) => `<option value="${y}">${y}학년도</option>`).join("");
+  sel.value = [...sel.options].some((o) => o.value === cur) ? cur : "all";
+}
 function renderList() {
   renderStats();
-  const list = filtered({ subject: listSubject, status: $("#fStatus").value, similar: $("#fSimilar").checked, search: $("#fSearch").value });
-  const box = $("#noteList");
+  const list = filtered({ subject: listSubject, status: $("#fStatus").value, similar: $("#fSimilar").checked, search: $("#fSearch").value, year: listYear });
   const st = { wrong: "아직 틀린", mastered: "익힌", all: "모은" }[$("#fStatus").value];
-  $("#secTitle").innerHTML = state.notes.length ? `<span class="sec-mark" style="background:${listSubject === "all" ? "var(--ink)" : subjColor(listSubject)}"></span>${listSubject === "all" ? "전체" : esc(listSubject)} · ${st} ${list.length}문제` : "";
+  const yName = listYear === "all" ? "" : `${listYear}학년도 · `;
+  $("#secTitle").innerHTML = state.notes.length ? `<span class="sec-mark" style="background:${listSubject === "all" ? "var(--ink)" : subjColor(listSubject)}"></span>${yName}${listSubject === "all" ? "전체" : esc(listSubject)} · ${st} ${list.length}문제` : "";
+  const box = $("#noteList");
   if (!state.notes.length) { box.innerHTML = `<div class="empty">아직 모은 오답이 없어요.<br>아래 "찍기"에서 틀린 문제를 찍어 올려 보세요.</div>`; return; }
   box.innerHTML = list.length ? list.map(noteCard).join("") : `<div class="empty">조건에 맞는 문제가 없어요.</div>`;
   typeset(box);
 }
 ["#fStatus", "#fSimilar"].forEach((s) => ($(s).onchange = renderList));
+$("#yearTabs").addEventListener("click", (e) => {
+  const t = e.target.closest("[data-year]"); if (!t) return;
+  listYear = t.dataset.year === "all" ? "all" : +t.dataset.year; renderList(); window.scrollTo({ top: 0, behavior: "smooth" });
+});
 $("#indexTabs").addEventListener("click", (e) => {
   const t = e.target.closest("[data-sub]"); if (!t) return;
   listSubject = t.dataset.sub; renderList(); window.scrollTo({ top: 0, behavior: "smooth" });
@@ -683,14 +712,15 @@ ${n.figure ? "(원래 문제에는 함께 보낸 그림이 있다)" : ""}
 
 // ───────── 다시 풀기 ─────────
 function retryPool() {
-  return filtered({ subject: $("#rSubject").value || "all", status: $("#rMastered").checked ? "all" : "wrong", similar: $("#rSimilar").checked });
+  return filtered({ subject: $("#rSubject").value || "all", status: $("#rMastered").checked ? "all" : "wrong", similar: $("#rSimilar").checked, year: $("#rYear").value || "all" });
 }
 function updateRetryAvail() {
+  fillYearSelect($("#rYear"));
   const cur = $("#rSubject").value || "all"; fillSubjectSelect($("#rSubject"));
   $("#rSubject").value = [...$("#rSubject").options].some((o) => o.value === cur) ? cur : "all";
   $("#rAvail").textContent = `풀 수 있는 문제: ${retryPool().length}개`;
 }
-["#rSubject", "#rSimilar", "#rMastered"].forEach((s) => ($(s).onchange = updateRetryAvail));
+["#rYear", "#rSubject", "#rSimilar", "#rMastered"].forEach((s) => ($(s).onchange = updateRetryAvail));
 
 $("#btnStartRetry").onclick = () => {
   const pool = retryPool();
@@ -783,14 +813,15 @@ async function finishOne(n, ok) {
 
 // ───────── PDF 뽑기 ─────────
 function printPool() {
-  return filtered({ subject: $("#pSubject").value || "all", status: $("#pStatus").value, similar: $("#pSimilar").checked });
+  return filtered({ subject: $("#pSubject").value || "all", status: $("#pStatus").value, similar: $("#pSimilar").checked, year: $("#pYear").value || "all" });
 }
 function updatePrintAvail() {
+  fillYearSelect($("#pYear"));
   const cur = $("#pSubject").value || "all"; fillSubjectSelect($("#pSubject"));
   $("#pSubject").value = [...$("#pSubject").options].some((o) => o.value === cur) ? cur : "all";
   $("#pAvail").textContent = `넣을 수 있는 문제: ${printPool().length}개`;
 }
-["#pSubject", "#pStatus", "#pSimilar"].forEach((s) => ($(s).onchange = updatePrintAvail));
+["#pYear", "#pSubject", "#pStatus", "#pSimilar"].forEach((s) => ($(s).onchange = updatePrintAvail));
 
 $("#btnPrint").onclick = () => {
   let list = printPool();
@@ -798,7 +829,7 @@ $("#btnPrint").onclick = () => {
   if ($("#pShuffle").checked) list = shuffle(list);
   list = list.slice(0, +$("#pCount").value);
   const space = $("#pSpace").value, title = $("#pTitle").value.trim() || "오답 다시 풀기";
-  const subj = $("#pSubject").value === "all" ? "여러 과목" : $("#pSubject").value;
+  const subj = ($("#pYear").value === "all" ? "" : $("#pYear").value + "학년도 ") + ($("#pSubject").value === "all" ? "여러 과목" : $("#pSubject").value);
   const d = new Date(), today = `${d.getFullYear()}. ${d.getMonth() + 1}. ${d.getDate()}.`;
   const items = list.map((n, i) => `<div class="p-item"><div><span class="p-num">${i + 1}.</span>${rich(n.question)}</div>
       ${n.figure ? `<img class="fig" src="${n.figure}">` : ""}

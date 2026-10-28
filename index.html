@@ -67,9 +67,10 @@
       <label class="chk"><input type="checkbox" id="fSimilar" checked> 비슷한 문제도</label>
     </div>
     <input id="fSearch" class="search" placeholder="문제 글, 단원, 유형으로 찾기">
+    <div id="indexTabs" class="index-tabs"></div>
     <div id="secTitle" class="sec-title"></div>
     <div id="noteList" class="note-list"></div>
-    <div id="indexTabs" class="index-tabs"></div>
+    <div id="yearTabs" class="year-tabs"></div>
   </section>
 
   <!-- 찍기 -->
@@ -101,6 +102,7 @@
     <div id="retrySetup" class="card">
       <h2>다시 풀기</h2>
       <div class="form-grid">
+        <label>학년도 <select id="rYear"></select></label>
         <label>과목 <select id="rSubject"></select></label>
         <label>문제 수 <select id="rCount">
           <option>5</option><option selected>10</option><option>20</option><option value="999">모두</option>
@@ -121,6 +123,7 @@
       <h2>시험지로 뽑기 (PDF)</h2>
       <div class="form-grid">
         <label>제목 <input id="pTitle" value="오답 다시 풀기"></label>
+        <label>학년도 <select id="pYear"></select></label>
         <label>과목 <select id="pSubject"></select></label>
         <label>어떤 문제 <select id="pStatus">
           <option value="wrong">아직 틀린 문제</option>

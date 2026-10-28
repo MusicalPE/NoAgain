@@ -15,7 +15,7 @@ export const FIREBASE_CONFIG = {
 
 // 2) App Check(reCAPTCHA Enterprise) 사이트 키
 //    AI 기능을 켜면 App Check 가 자동으로 켜지므로 꼭 넣어야 AI가 동작합니다.
-export const RECAPTCHA_SITE_KEY = "";
+export const RECAPTCHA_SITE_KEY = "6LfyygQuAAAAANi6jh6_u3kexVPJN1zu7d_JcOAA";
 
 // 3) 사용할 AI 모델 이름 (앞에서부터 차례로 시도)
 //    콘솔 AI Logic 화면에서 쓸 수 있는 모델 이름을 확인해 맨 앞에 두면 됩니다.

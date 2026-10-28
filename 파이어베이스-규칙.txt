@@ -1,11 +1,60 @@
 rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
-    // 로그인한 사람은 자기 칸(users/자기uid)만 읽고 쓸 수 있습니다.
+
+    function signedIn() { return request.auth != null; }
+    function me() { return request.auth.uid; }
+
+    // 내 설정(마지막으로 연 노트) + 예전 저장 위치(새 노트로 옮길 때 읽기용)
     match /users/{uid} {
-      allow read, write: if request.auth != null && request.auth.uid == uid;
+      allow read, write: if signedIn() && me() == uid;
       match /notes/{noteId} {
-        allow read, write: if request.auth != null && request.auth.uid == uid;
+        allow read, write: if signedIn() && me() == uid;
+      }
+    }
+
+    // 같이 쓰는 노트
+    match /notebooks/{nb} {
+      // 만들기: 만든 사람 혼자로 시작
+      allow create: if signedIn()
+        && request.resource.data.owner == me()
+        && request.resource.data.members == [me()];
+
+      // 보기: 함께 쓰는 사람만
+      allow read: if signedIn() && me() in resource.data.members;
+
+      // 고치기 1) 함께 쓰는 사람: 노트 이름·학년·초대 QR 만들기 (사람 목록은 못 바꿈)
+      allow update: if signedIn() && me() in resource.data.members
+        && request.resource.data.members == resource.data.members
+        && request.resource.data.owner == resource.data.owner;
+
+      // 고치기 2) 만든 사람: 다른 사람 빼기
+      allow update: if signedIn() && me() == resource.data.owner
+        && request.resource.data.owner == resource.data.owner
+        && resource.data.members.hasAll(request.resource.data.members)
+        && me() in request.resource.data.members;
+
+      // 고치기 3) 초대 QR로 들어오기 (하루 안, 코드가 맞을 때, 나 한 사람만 추가)
+      allow update: if signedIn() && !(me() in resource.data.members)
+        && resource.data.inviteCode is string && resource.data.inviteCode != ""
+        && request.resource.data.lastJoinCode == resource.data.inviteCode
+        && request.time.toMillis() < resource.data.inviteExpires
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['members', 'lastJoinCode', 'names'])
+        && request.resource.data.members.hasAll(resource.data.members)
+        && request.resource.data.members.size() == resource.data.members.size() + 1
+        && me() in request.resource.data.members;
+
+      // 고치기 4) 스스로 나가기 (만든 사람 빼고)
+      allow update: if signedIn() && me() in resource.data.members && me() != resource.data.owner
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['members', 'names'])
+        && request.resource.data.members == resource.data.members.removeAll([me()]);
+
+      allow delete: if signedIn() && me() == resource.data.owner;
+
+      // 노트 안의 문제: 함께 쓰는 사람 모두 읽고 쓰기
+      match /notes/{noteId} {
+        allow read, write: if signedIn()
+          && me() in get(/databases/$(database)/documents/notebooks/$(nb)).data.members;
       }
     }
   }

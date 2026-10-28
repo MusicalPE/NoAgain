@@ -4,7 +4,7 @@ import { initializeApp } from "https://www.gstatic.com/firebasejs/12.18.0/fireba
 import { initializeAppCheck, ReCaptchaEnterpriseProvider } from "https://www.gstatic.com/firebasejs/12.18.0/firebase-app-check.js";
 import { getAuth, GoogleAuthProvider, signInWithPopup, signInWithRedirect, onAuthStateChanged, signOut }
   from "https://www.gstatic.com/firebasejs/12.18.0/firebase-auth.js";
-import { getFirestore, collection, doc, addDoc, updateDoc, deleteDoc, getDocs, getDoc, setDoc, query, orderBy }
+import { getFirestore, collection, doc, addDoc, updateDoc, deleteDoc, getDocs, getDoc, setDoc, query, orderBy, where, arrayUnion, arrayRemove, writeBatch }
   from "https://www.gstatic.com/firebasejs/12.18.0/firebase-firestore.js";
 import { getAI, getGenerativeModel, GoogleAIBackend } from "https://www.gstatic.com/firebasejs/12.18.0/firebase-ai.js";
 
@@ -47,7 +47,8 @@ export function normAnswer(s) {
 }
 
 // ───────── 상태 ─────────
-const state = { user: null, profile: { grade: "" }, notes: [], view: "list", photo: null, recog: [], retry: null };
+const state = { user: null, nb: null, notebooks: [], notes: [], view: "list", photo: null, recog: [], retry: null };
+const grade = () => (state.nb && state.nb.grade) || "";
 
 // ───────── 파이어베이스 ─────────
 if (!FIREBASE_CONFIG.apiKey) {
@@ -62,7 +63,7 @@ if (RECAPTCHA_SITE_KEY) {
 const auth = getAuth(app);
 const db = getFirestore(app);
 const ai = getAI(app, { backend: new GoogleAIBackend() });
-const notesCol = () => collection(db, "users", state.user.uid, "notes");
+const notesCol = () => collection(db, "notebooks", state.nb.id, "notes");
 
 // ───────── AI 부르기 ─────────
 function parseJSON(text) {
@@ -143,13 +144,72 @@ onAuthStateChanged(auth, async (user) => {
   $("#userBox").classList.toggle("hidden", !user);
   if (!user) { document.querySelectorAll(".view").forEach((v) => v.id !== "view-login" && v.classList.add("hidden")); return; }
   $("#userName").textContent = user.displayName || user.email;
-  try {
-    const p = await getDoc(doc(db, "users", user.uid));
-    if (p.exists()) state.profile = { grade: "", ...p.data() };
-  } catch (_) {}
+  busy(true, "노트를 여는 중");
+  try { await setupNotebook(); }
+  catch (e) { busy(false); toast("노트를 열지 못했어요: " + (e.code || e.message), 4000); return; }
+  busy(false);
   await loadNotes();
   show("list");
 });
+
+// ───────── 같이 쓰는 노트 ─────────
+// notebooks/{id} : { name, owner, members:[uid], names:{uid:이름}, grade, inviteCode, inviteExpires }
+// notebooks/{id}/notes/{noteId} : 문제
+const invite = (() => { const q = new URLSearchParams(location.search); return q.get("nb") && q.get("code") ? { nb: q.get("nb"), code: q.get("code") } : null; })();
+if (invite) $("#loginInvite").classList.remove("hidden");
+const myName = () => state.user.displayName || (state.user.email || "").split("@")[0];
+const nbRef = (id) => doc(db, "notebooks", id);
+
+async function listNotebooks() {
+  const snap = await getDocs(query(collection(db, "notebooks"), where("members", "array-contains", state.user.uid)));
+  state.notebooks = snap.docs.map((d) => ({ id: d.id, ...d.data() })).sort((a, b) => (a.createdAt || 0) - (b.createdAt || 0));
+}
+async function useNotebook(id) {
+  state.nb = state.notebooks.find((n) => n.id === id) || state.notebooks[0];
+  try { await setDoc(doc(db, "users", state.user.uid), { currentNb: state.nb.id }, { merge: true }); } catch (_) {}
+}
+async function createNotebook(name, gradeText = "") {
+  const uid = state.user.uid;
+  const ref = await addDoc(collection(db, "notebooks"), {
+    name, owner: uid, members: [uid], names: { [uid]: myName() }, grade: gradeText, inviteCode: "", inviteExpires: 0, createdAt: Date.now()
+  });
+  return ref.id;
+}
+async function setupNotebook() {
+  const uid = state.user.uid;
+  let joined = "";
+  if (invite) {
+    try {
+      await updateDoc(nbRef(invite.nb), { members: arrayUnion(uid), lastJoinCode: invite.code, ["names." + uid]: myName() });
+      joined = invite.nb;
+    } catch (_) { setTimeout(() => toast("초대가 끝났거나 잘못된 QR이에요. 초대한 사람에게 새 QR을 받아 주세요", 5000), 300); }
+    history.replaceState(null, "", location.pathname);
+  }
+  await listNotebooks();
+  let user = {};
+  try { const u = await getDoc(doc(db, "users", uid)); if (u.exists()) user = u.data(); } catch (_) {}
+  if (!state.notebooks.length) {
+    const id = await createNotebook(`${NAME} 노트`, user.grade || "");
+    await migrateOldNotes(id);
+    await listNotebooks();
+  }
+  await useNotebook(joined || (state.notebooks.some((n) => n.id === user.currentNb) ? user.currentNb : state.notebooks[0].id));
+  if (joined) setTimeout(() => toast(`"${state.nb.name}"에 함께하게 됐어요`, 3500), 300);
+}
+// 예전(혼자 쓰던) 저장 위치에 있던 문제를 새 노트로 옮기기
+async function migrateOldNotes(nbId) {
+  try {
+    const old = await getDocs(collection(db, "users", state.user.uid, "notes"));
+    if (old.empty) return;
+    const idMap = {}; old.docs.forEach((d) => (idMap[d.id] = d.id));
+    let batch = writeBatch(db), n = 0;
+    for (const d of old.docs) {
+      batch.set(doc(db, "notebooks", nbId, "notes", d.id), { ...d.data(), addedBy: state.user.uid, addedByName: myName() });
+      if (++n % 400 === 0) { await batch.commit(); batch = writeBatch(db); }
+    }
+    await batch.commit();
+  } catch (_) {}
+}
 
 // ───────── 데이터 ─────────
 async function loadNotes() {
@@ -165,7 +225,8 @@ async function addNote(data) {
   const note = {
     subject: "기타", unit: "", type: "", question: "", choices: [], myAnswer: "", correctAnswer: "",
     answerFromAI: false, wrongReason: "", explanation: "", figure: "", source: "photo", parentId: "",
-    status: "wrong", wrongCount: 1, correctStreak: 0, tryCount: 0, lastTriedAt: 0, createdAt: now, updatedAt: now, ...data
+    status: "wrong", wrongCount: 1, correctStreak: 0, tryCount: 0, lastTriedAt: 0, createdAt: now, updatedAt: now,
+    addedBy: state.user.uid, addedByName: myName(), ...data
   };
   const ref = await addDoc(notesCol(), note);
   const saved = { id: ref.id, ...note };
@@ -215,7 +276,7 @@ function noteCard(n) {
       ${n.type ? `<span class="tag">${esc(n.type)}</span>` : ""}
       ${n.source === "ai" ? `<span class="tag ai">비슷한 문제</span>` : ""}
       ${n.status === "mastered" ? `<span class="tag ok">익힘</span>` : `<span class="tag wrong">${n.wrongCount ? `틀림 ${n.wrongCount}번` : "연습할 문제"}</span>`}
-      <span class="muted small" style="margin-left:auto">${fmtDate(n.createdAt)}</span>
+      <span class="muted small" style="margin-left:auto">${(state.nb.members || []).length > 1 && n.addedByName ? esc(n.addedByName) + " · " : ""}${fmtDate(n.createdAt)}</span>
     </div>
     <div class="q">${rich(n.question)}</div>
     ${n.figure ? `<img class="fig" src="${n.figure}" alt="문제 그림">` : ""}
@@ -334,25 +395,87 @@ function openEdit(n) {
 }
 
 // ───────── 설정 ─────────
-$("#btnSettings").onclick = () => {
+$("#btnSettings").onclick = () => openSettings();
+function openSettings() {
+  const nb = state.nb, uid = state.user.uid, isOwner = nb.owner === uid;
+  const people = (nb.members || []).map((m) => `<li>${esc((nb.names || {})[m] || "이름 없음")}${m === nb.owner ? " <span class='tag'>만든 사람</span>" : ""}${m === uid ? " (나)" : ""}
+      ${isOwner && m !== uid ? `<button class="btn sm ghost" data-kick="${m}">빼기</button>` : ""}</li>`).join("");
+  const others = state.notebooks.length > 1
+    ? `<label>다른 노트로 바꾸기<select id="sSwitch">${state.notebooks.map((n) => `<option value="${n.id}" ${n.id === nb.id ? "selected" : ""}>${esc(n.name)}</option>`).join("")}</select></label>` : "";
   openModal(`<h2>설정</h2>
     <div class="edit">
-      <label>학년 (AI가 눈높이를 맞추는 데 써요)<input id="sGrade" placeholder="예: 초등 4학년, 중학교 2학년" value="${esc(state.profile.grade)}"></label>
+      <label>노트 이름<input id="sName" value="${esc(nb.name)}"></label>
+      <label>학년 (AI가 눈높이를 맞추는 데 써요)<input id="sGrade" placeholder="예: 초등 4학년, 중학교 2학년" value="${esc(nb.grade || "")}"></label>
+      ${others}
     </div>
+    <h3 style="margin-top:14px">함께 쓰는 사람</h3>
+    <ul class="people">${people}</ul>
+    <button class="btn red" id="sInvite">QR로 초대하기</button>
+    <p class="muted small">초대받은 사람은 QR을 찍고 자기 구글 계정으로 로그인하면 이 노트를 같이 보고 함께 채울 수 있어요.</p>
     <p class="muted small">로그인: ${esc(state.user.email)}</p>
     <div class="row" style="margin-top:12px">
       <button class="btn primary" id="sSave">저장</button>
       <button class="btn" id="sOut">로그아웃</button>
+      ${isOwner ? `<button class="btn ghost" id="sNew">새 노트 만들기</button>` : `<button class="btn ghost" id="sLeave">이 노트에서 나가기</button>`}
       <button class="btn ghost" id="sClose">닫기</button>
     </div>`);
   $("#sClose").onclick = closeModal;
-  $("#sOut").onclick = async () => { closeModal(); state.notes = []; state.retry = null; await signOut(auth); };
+  $("#sOut").onclick = async () => { closeModal(); state.notes = []; state.retry = null; state.nb = null; await signOut(auth); };
+  $("#sInvite").onclick = () => openInvite();
   $("#sSave").onclick = async () => {
-    state.profile.grade = $("#sGrade").value.trim();
-    try { await setDoc(doc(db, "users", state.user.uid), { grade: state.profile.grade }, { merge: true }); toast("저장했어요"); closeModal(); }
-    catch (e) { toast("저장하지 못했어요: " + (e.code || e.message)); }
+    const data = { name: $("#sName").value.trim() || nb.name, grade: $("#sGrade").value.trim() };
+    try {
+      await updateDoc(nbRef(nb.id), data); Object.assign(nb, data);
+      const sw = $("#sSwitch");
+      if (sw && sw.value !== nb.id) { await useNotebook(sw.value); state.retry = null; closeModal(); await loadNotes(); show("list"); toast(`"${state.nb.name}"로 바꿨어요`); return; }
+      toast("저장했어요"); closeModal();
+    } catch (e) { toast("저장하지 못했어요: " + (e.code || e.message)); }
   };
-};
+  $("#modalBox").querySelectorAll("[data-kick]").forEach((b) => (b.onclick = async () => {
+    const who = (nb.names || {})[b.dataset.kick] || "이 사람";
+    if (!confirm(`${who}을(를) 이 노트에서 뺄까요?`)) return;
+    try { await updateDoc(nbRef(nb.id), { members: arrayRemove(b.dataset.kick) }); nb.members = nb.members.filter((m) => m !== b.dataset.kick); openSettings(); }
+    catch (e) { toast("빼지 못했어요: " + (e.code || e.message)); }
+  }));
+  if ($("#sLeave")) $("#sLeave").onclick = async () => {
+    if (!confirm("이 노트에서 나갈까요? 다시 들어오려면 새 초대 QR이 필요해요.")) return;
+    try {
+      await updateDoc(nbRef(nb.id), { members: arrayRemove(uid) });
+      closeModal(); busy(true, "노트를 여는 중"); state.nb = null; await setupNotebook(); busy(false); await loadNotes(); show("list");
+    } catch (e) { busy(false); toast("나가지 못했어요: " + (e.code || e.message)); }
+  };
+  if ($("#sNew")) $("#sNew").onclick = async () => {
+    const name = prompt("새 노트 이름", "새 오답노트"); if (!name) return;
+    try {
+      const id = await createNotebook(name.trim()); await listNotebooks(); await useNotebook(id);
+      state.retry = null; closeModal(); await loadNotes(); show("list"); toast(`"${name}"를 만들었어요`);
+    } catch (e) { toast("만들지 못했어요: " + (e.code || e.message)); }
+  };
+}
+
+// QR 초대: 하루 동안 쓸 수 있는 초대 코드를 만들어 QR로 보여 주기
+async function openInvite() {
+  const nb = state.nb;
+  const abc = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
+  const code = Array.from(crypto.getRandomValues(new Uint8Array(8)), (v) => abc[v % abc.length]).join("");
+  const expires = Date.now() + 24 * 60 * 60 * 1000;
+  try { await updateDoc(nbRef(nb.id), { inviteCode: code, inviteExpires: expires }); Object.assign(nb, { inviteCode: code, inviteExpires: expires }); }
+  catch (e) { toast("초대를 만들지 못했어요: " + (e.code || e.message)); return; }
+  const url = `${location.origin}${location.pathname}?nb=${encodeURIComponent(nb.id)}&code=${code}`;
+  openModal(`<h2>QR로 초대하기</h2>
+    <p class="muted small">함께 쓸 사람이 휴대폰 카메라로 찍으면 "${esc(nb.name)}"에 들어와요. 이 QR은 하루 동안만 쓸 수 있어요.</p>
+    <div id="qrBox" class="qr-box"></div>
+    <div class="row" style="justify-content:center;margin-top:10px">
+      <button class="btn" id="qCopy">링크 복사</button>
+      ${navigator.share ? `<button class="btn" id="qShare">카톡 등으로 보내기</button>` : ""}
+      <button class="btn ghost" id="qBack">돌아가기</button>
+    </div>`);
+  if (window.qrcode) { const qr = window.qrcode(0, "M"); qr.addData(url); qr.make(); $("#qrBox").innerHTML = qr.createImgTag(6, 8, "초대 QR"); }
+  else $("#qrBox").innerHTML = `<p class="muted small">QR을 그리지 못했어요. 아래 링크 복사를 써 주세요.</p>`;
+  $("#qCopy").onclick = async () => { try { await navigator.clipboard.writeText(url); toast("링크를 복사했어요"); } catch (_) { prompt("이 링크를 복사하세요", url); } };
+  if ($("#qShare")) $("#qShare").onclick = () => navigator.share({ title: NAME, text: `${nb.name}에 같이 쓰자!`, url }).catch(() => {});
+  $("#qBack").onclick = () => openSettings();
+}
 
 // ───────── 찍기 ─────────
 async function onPhoto(file) {
@@ -371,7 +494,7 @@ $("#btnClearPhoto").onclick = () => { state.photo = null; state.recog = []; $("#
 
 function recognizePrompt() {
   return `너는 학생의 오답노트를 정리해 주는 친절한 선생님이다. 사진은 학생이 푼 시험지·문제집·학습지다.
-학생 학년: ${state.profile.grade || "모름(사진을 보고 짐작)"}
+학생 학년: ${grade() || "모름(사진을 보고 짐작)"}
 할 일
 1. 사진 속 문제를 하나하나 찾는다. 잘려서 다 보이지 않는 문제는 빼고, 온전히 보이는 문제만 정리한다.
 2. 채점 표시(빗금, X표, 빨간 줄, 세모)가 있으면 그것으로 틀린 문제를 판단한다. 동그라미는 맞은 문제다. 채점 표시가 없으면 학생 답과 정답을 비교해 판단한다.
@@ -511,7 +634,7 @@ function cropEditor(canvas, initBox) {
 // ───────── 비슷한 문제 만들기 ─────────
 async function makeSimilar(n, count) {
   const prompt = `너는 학생에게 연습 문제를 내 주는 선생님이다. 아래 "원래 문제"와 같은 유형의 새 문제를 ${count}개 만든다.
-학생 학년: ${state.profile.grade || "원래 문제 수준에 맞춤"}
+학생 학년: ${grade() || "원래 문제 수준에 맞춤"}
 규칙
 - 같은 개념, 같은 풀이 방법을 쓰는 문제로 만들되 숫자·상황·낱말은 바꾼다. 원래 문제를 그대로 베끼지 않는다.
 - 학생이 틀린 이유(${n.wrongReason || "모름"})를 다시 연습할 수 있게 만든다.

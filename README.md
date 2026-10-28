@@ -7,7 +7,7 @@
 - 같은 유형의 비슷한 문제 자동 생성
 - 틀린 문제만 모아 다시 풀기 (두 번 연속 맞히면 익힘)
 - A4 시험지 + 정답·풀이 PDF 출력
-- Google 로그인, 사람마다 따로 저장
+- Google 로그인, QR 초대로 가족이 같은 노트를 함께 쓰기
 
 GitHub Pages + Firebase(Authentication, Firestore, AI Logic, App Check)로 동작합니다.
 설치 방법은 `설치안내.txt`를 보세요.

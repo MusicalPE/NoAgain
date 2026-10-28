@@ -1,0 +1,9 @@
+{
+  "name": "주또싫 - 주원이는 또 틀리기 싫어요",
+  "short_name": "주또싫",
+  "start_url": "./",
+  "display": "standalone",
+  "background_color": "#fcf7ec",
+  "theme_color": "#fcf7ec",
+  "icons": [{ "src": "icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any" }]
+}

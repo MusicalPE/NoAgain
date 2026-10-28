@@ -5,12 +5,12 @@
 
 // 1) 파이어베이스 콘솔 > 프로젝트 설정 > 내 앱(웹) 에서 복사한 값
 export const FIREBASE_CONFIG = {
-  apiKey: "",
-  authDomain: "",
-  projectId: "",
-  storageBucket: "",
-  messagingSenderId: "",
-  appId: ""
+  apiKey: "AIzaSyBpWX2PJeh-PKpHzrMkmyC1iH5jTXuUiX4",
+  authDomain: "no--again.firebaseapp.com",
+  projectId: "no--again",
+  storageBucket: "no--again.firebasestorage.app",
+  messagingSenderId: "227540832273",
+  appId: "1:227540832273:web:3d5a96170918f505f8a1b0"
 };
 
 // 2) App Check(reCAPTCHA Enterprise) 사이트 키

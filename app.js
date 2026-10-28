@@ -76,6 +76,9 @@ function parseJSON(text) {
     throw new Error("AI 답을 읽지 못했어요");
   }
 }
+// 오류 구분: "generateContent" 안의 "rate" 같은 글자에 걸리지 않게 낱말 단위로 찾기
+const QUOTA_RE = /quota|\b429\b|exhausted|rate.?limit|too many requests/i;
+const NO_MODEL_RE = /not found|\b404\b|not supported|unsupported|is not available|invalid model/i;
 async function askAI(parts, temperature = 0.2) {
   let lastErr;
   for (const name of AI_MODELS) {
@@ -86,17 +89,19 @@ async function askAI(parts, temperature = 0.2) {
     } catch (e) {
       lastErr = e;
       const msg = String(e?.message || e);
-      if (!/not found|404|not supported|unsupported|is not available|invalid model/i.test(msg)) break;
+      // 모델이 없거나, 그 모델의 무료 사용량이 찼으면 다음 모델로
+      if (!NO_MODEL_RE.test(msg) && !QUOTA_RE.test(msg)) break;
     }
   }
   throw lastErr;
 }
 function aiErrorText(e) {
   const m = String(e?.message || e);
-  if (/app.?check|attestation|recaptcha/i.test(m)) return "App Check 설정을 확인해 주세요 (설치안내.txt 5단계)";
-  if (/quota|429|exhausted|rate/i.test(m)) return "AI 사용량이 잠깐 넘쳤어요. 1~2분 뒤 다시 해 보세요";
-  if (/api.*not.*enabled|403|permission/i.test(m)) return "AI Logic 이 켜져 있는지 확인해 주세요 (설치안내.txt 4단계)";
-  return "AI가 답하지 못했어요: " + m.slice(0, 120);
+  const raw = " (" + m.replace(/^\[[^\]]*\]\s*/, "").replace(/Error fetching from \S+\s*/i, "").replace(/^[:\s]+/, "").slice(0, 110) + ")";
+  if (/app.?check|attestation|recaptcha/i.test(m)) return "App Check 설정을 확인해 주세요" + raw;
+  if (QUOTA_RE.test(m)) return "AI 사용량이 잠깐 넘쳤어요. 1~2분 뒤 다시 해 보세요" + raw;
+  if (/api.*not.*enabled|\b403\b|permission/i.test(m)) return "AI Logic 이 켜져 있는지 확인해 주세요" + raw;
+  return "AI가 답하지 못했어요" + raw;
 }
 
 // ───────── 사진 처리 ─────────
@@ -386,7 +391,7 @@ $("#noteList").addEventListener("click", async (e) => {
   } else if (act === "similar") {
     busy(true, "비슷한 문제를 만드는 중");
     try { const made = await makeSimilar(n, SIMILAR_COUNT); toast(`비슷한 문제 ${made}개를 만들었어요`); renderList(); }
-    catch (err) { toast(aiErrorText(err), 4000); }
+    catch (err) { toast(aiErrorText(err), 8000); }
     busy(false);
   }
 });
@@ -568,7 +573,7 @@ $("#btnRecognize").onclick = async () => {
     }));
     renderRecog();
     if (!probs.length) toast("문제를 찾지 못했어요. 더 가까이, 밝게 찍어 보세요", 3500);
-  } catch (e) { toast(aiErrorText(e), 4500); }
+  } catch (e) { toast(aiErrorText(e), 8000); }
   busy(false);
 };
 
@@ -645,7 +650,7 @@ async function saveRecog() {
       }
     }
     toast(`${saved}문제를 저장했어요` + (made ? `, 비슷한 문제 ${made}개도 만들었어요` : ""), 3000);
-    if (aiFail) setTimeout(() => toast(aiErrorText(aiFail), 4500), 3100);
+    if (aiFail) setTimeout(() => toast(aiErrorText(aiFail), 8000), 3100);
     state.photo = null; state.recog = []; $("#photoPreview").classList.add("hidden"); $("#recogResult").innerHTML = "";
     busy(false); show("list");
   } catch (e) { busy(false); toast("저장하지 못했어요: " + (e.code || e.message), 4000); }

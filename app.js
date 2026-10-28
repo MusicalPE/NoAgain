@@ -1,5 +1,5 @@
 // 주또싫 (오답노트) — 음악적체육인
-import { FIREBASE_CONFIG, RECAPTCHA_SITE_KEY, AI_MODELS, SUBJECTS, SIMILAR_COUNT, APP_NAME, APP_SUBTITLE } from "./config.js";
+import { FIREBASE_CONFIG, RECAPTCHA_SITE_KEY, AI_MODELS, SUBJECTS, SIMILAR_COUNT, APP_NAME, APP_SUBTITLE, SUBJECT_COLORS } from "./config.js";
 import { initializeApp } from "https://www.gstatic.com/firebasejs/12.18.0/firebase-app.js";
 import { initializeAppCheck, ReCaptchaEnterpriseProvider } from "https://www.gstatic.com/firebasejs/12.18.0/firebase-app-check.js";
 import { getAuth, GoogleAuthProvider, signInWithPopup, signInWithRedirect, onAuthStateChanged, signOut }
@@ -49,6 +49,8 @@ export function normAnswer(s) {
 // ───────── 상태 ─────────
 const state = { user: null, nb: null, notebooks: [], notes: [], view: "list", photo: null, recog: [], retry: null };
 const grade = () => (state.nb && state.nb.grade) || "";
+const subjColor = (s) => (SUBJECT_COLORS && SUBJECT_COLORS[s]) || "#9aa3ad";
+let listSubject = "all";
 
 // ───────── 파이어베이스 ─────────
 if (!FIREBASE_CONFIG.apiKey) {
@@ -248,6 +250,7 @@ function show(view) {
   state.view = view;
   document.querySelectorAll(".view").forEach((v) => v.classList.add("hidden"));
   $("#view-" + view).classList.remove("hidden");
+  document.body.classList.toggle("list-mode", view === "list");
   document.querySelectorAll("#tabs button").forEach((b) => b.classList.toggle("on", b.dataset.view === view));
   if (view === "list") renderList();
   if (view === "retry") { if (!state.retry) { $("#retrySetup").classList.remove("hidden"); $("#retryPlay").classList.add("hidden"); } updateRetryAvail(); }
@@ -269,9 +272,10 @@ function choicesHTML(choices) {
 }
 function noteCard(n) {
   const parent = n.parentId ? state.notes.find((x) => x.id === n.parentId) : null;
-  return `<article class="note" data-id="${n.id}">
+  const col = subjColor(n.subject);
+  return `<article class="note" data-id="${n.id}" style="--sc:${col}">
+    <span class="flag">${esc(n.subject)}</span>
     <div class="note-head">
-      <span class="tag subj">${esc(n.subject)}</span>
       ${n.unit ? `<span class="tag">${esc(n.unit)}</span>` : ""}
       ${n.type ? `<span class="tag">${esc(n.type)}</span>` : ""}
       ${n.source === "ai" ? `<span class="tag ai">비슷한 문제</span>` : ""}
@@ -304,8 +308,14 @@ function renderStats() {
   const done = state.notes.length - wrong;
   const bySub = {};
   state.notes.forEach((n) => { if (n.status !== "mastered") bySub[n.subject] = (bySub[n.subject] || 0) + 1; });
-  $("#stats").innerHTML = `<div class="stat red"><b>${wrong}</b>아직 틀림</div><div class="stat green"><b>${done}</b>익힘</div>` +
-    Object.entries(bySub).map(([s, c]) => `<div class="stat"><b>${c}</b>${esc(s)}</div>`).join("");
+  $("#stats").innerHTML = `<div class="stat red"><b>${wrong}</b>아직 틀림</div><div class="stat green"><b>${done}</b>익힘</div>`;
+  // 옆에 붙인 색 띠지
+  const subs = SUBJECTS.filter((s) => state.notes.some((n) => n.subject === s));
+  if (listSubject !== "all" && !subs.includes(listSubject)) listSubject = "all";
+  const num = (c) => `<span class="cnt">${c || ""}</span>`;
+  $("#indexTabs").innerHTML = !state.notes.length ? "" :
+    `<button class="itab all ${listSubject === "all" ? "on" : ""}" data-sub="all">전체${num(wrong)}</button>` +
+    subs.map((s) => `<button class="itab ${listSubject === s ? "on" : ""}" data-sub="${esc(s)}" style="background:${subjColor(s)}">${esc(s)}${num(bySub[s])}</button>`).join("");
 }
 function filtered({ subject, status, similar, search = "" }) {
   const q = search.trim().toLowerCase();
@@ -317,15 +327,19 @@ function filtered({ subject, status, similar, search = "" }) {
 }
 function renderList() {
   renderStats();
-  const cur = $("#fSubject").value || "all";
-  fillSubjectSelect($("#fSubject")); $("#fSubject").value = [...$("#fSubject").options].some((o) => o.value === cur) ? cur : "all";
-  const list = filtered({ subject: $("#fSubject").value, status: $("#fStatus").value, similar: $("#fSimilar").checked, search: $("#fSearch").value });
+  const list = filtered({ subject: listSubject, status: $("#fStatus").value, similar: $("#fSimilar").checked, search: $("#fSearch").value });
   const box = $("#noteList");
+  const st = { wrong: "아직 틀린", mastered: "익힌", all: "모은" }[$("#fStatus").value];
+  $("#secTitle").innerHTML = state.notes.length ? `<span class="sec-mark" style="background:${listSubject === "all" ? "var(--ink)" : subjColor(listSubject)}"></span>${listSubject === "all" ? "전체" : esc(listSubject)} · ${st} ${list.length}문제` : "";
   if (!state.notes.length) { box.innerHTML = `<div class="empty">아직 모은 오답이 없어요.<br>아래 "찍기"에서 틀린 문제를 찍어 올려 보세요.</div>`; return; }
   box.innerHTML = list.length ? list.map(noteCard).join("") : `<div class="empty">조건에 맞는 문제가 없어요.</div>`;
   typeset(box);
 }
-["#fSubject", "#fStatus", "#fSimilar"].forEach((s) => ($(s).onchange = renderList));
+["#fStatus", "#fSimilar"].forEach((s) => ($(s).onchange = renderList));
+$("#indexTabs").addEventListener("click", (e) => {
+  const t = e.target.closest("[data-sub]"); if (!t) return;
+  listSubject = t.dataset.sub; renderList(); window.scrollTo({ top: 0, behavior: "smooth" });
+});
 $("#fSearch").oninput = () => { clearTimeout(renderList._t); renderList._t = setTimeout(renderList, 250); };
 
 $("#noteList").addEventListener("click", async (e) => {
@@ -705,7 +719,7 @@ function renderRetry() {
   box.innerHTML = `<div class="progress"><div style="width:${(r.i / r.ids.length) * 100}%"></div></div>
   <div class="card">
     <div class="note-head"><b>${r.i + 1} / ${r.ids.length}</b>
-      <span class="tag subj">${esc(n.subject)}</span>${n.type ? `<span class="tag">${esc(n.type)}</span>` : ""}
+      <span class="tag subj" style="background:${subjColor(n.subject)};color:#fff">${esc(n.subject)}</span>${n.type ? `<span class="tag">${esc(n.type)}</span>` : ""}
       ${n.source === "ai" ? `<span class="tag ai">비슷한 문제</span>` : ""}</div>
     <div class="q">${rich(n.question)}</div>
     ${n.figure ? `<img class="fig" src="${n.figure}">` : ""}

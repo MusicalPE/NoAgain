@@ -28,5 +28,11 @@ export const APP_SUBTITLE = "주원이는 또 틀리기 싫어요";
 // 과목 목록 (원하는 대로 바꿔도 됩니다)
 export const SUBJECTS = ["국어", "수학", "영어", "사회", "과학", "역사", "도덕", "기타"];
 
+// 과목별 띠지 색 (목록에 없는 과목은 회색)
+export const SUBJECT_COLORS = {
+  "국어": "#f06d8a", "수학": "#4f8ef7", "영어": "#3fbf7f", "사회": "#f5a23a",
+  "과학": "#9b6cf2", "역사": "#c0875a", "도덕": "#2bb3b8", "기타": "#9aa3ad"
+};
+
 // 비슷한 문제를 한 번에 몇 개 만들지
 export const SIMILAR_COUNT = 2;

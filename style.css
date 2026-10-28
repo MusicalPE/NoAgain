@@ -139,6 +139,27 @@ details.exp p{margin:6px 0}
 .tabs button.on{color:var(--red);font-weight:700}
 .tabs button.on .ti{transform:rotate(-6deg)}
 
+/* 과목 색 띠지 (오답 모음) */
+body.list-mode main{padding-right:50px}
+.index-tabs{position:fixed;z-index:15;top:96px;right:max(0px,calc((100vw - 760px) / 2));display:none;flex-direction:column;align-items:flex-end;gap:6px;
+  max-height:calc(100vh - 190px);overflow-y:auto;scrollbar-width:none;padding:4px 0 4px 10px}
+.index-tabs::-webkit-scrollbar{display:none}
+body.list-mode .index-tabs{display:flex}
+.itab{width:38px;border:0;padding:10px 0 8px 4px;border-radius:8px 0 0 8px;color:#fff;font-weight:700;font-size:17px;cursor:pointer;
+  writing-mode:vertical-rl;text-orientation:upright;letter-spacing:-1px;line-height:1.1;opacity:.72;
+  box-shadow:-1px 2px 0 rgba(0,0,0,.12);background-image:linear-gradient(90deg,rgba(255,255,255,.28),rgba(255,255,255,0) 45%);
+  transition:width .15s,opacity .15s}
+.itab .cnt{display:inline;padding-inline-start:5px;font-size:14px;text-combine-upright:all;opacity:.95}
+.itab.on{width:48px;opacity:1;box-shadow:-2px 3px 0 rgba(0,0,0,.2)}
+.itab.all{background:#fff;color:var(--ink);border:1.5px solid #d8d2c4;border-right:0;opacity:.85}
+.itab.all.on{opacity:1}
+.sec-title{font-family:var(--pen);font-size:30px;line-height:1.1;margin:2px 0 16px;display:flex;align-items:center;gap:8px}
+.sec-mark{display:inline-block;width:26px;height:12px;border-radius:2px;flex:0 0 auto}
+.note{padding-top:22px;border-left:5px solid var(--sc,#e6e0d2)}
+.note::before{display:none}
+.flag{position:absolute;top:-9px;left:12px;padding:0 12px 2px;background:var(--sc,#9aa3ad);color:#fff;font-weight:700;font-size:15px;
+  border-radius:3px 3px 0 0;box-shadow:0 2px 0 rgba(0,0,0,.08)}
+
 /* 함께 쓰기 */
 .people{margin:4px 0 10px;padding-left:20px}
 .people li{padding:2px 0}

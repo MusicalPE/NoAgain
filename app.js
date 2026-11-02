@@ -339,6 +339,8 @@ function choicesHTML(choices) {
 function noteCard(n) {
   const parent = n.parentId ? state.notes.find((x) => x.id === n.parentId) : null;
   const col = subjColor(n.subject);
+  // 내 답이 정답과 같거나, 처음 찍을 때 맞은 문제로 저장된 경우는 맞은 답으로 보여 주기
+  const mineOk = !!n.myAnswer && (normAnswer(n.myAnswer) === normAnswer(n.correctAnswer) || (n.source === "photo" && !n.wrongCount));
   return `<article class="note" data-id="${n.id}" style="--sc:${col}">
     <span class="flag">${esc(n.subject)}</span>
     <div class="note-head">
@@ -352,11 +354,11 @@ function noteCard(n) {
     ${n.figure ? `<img class="fig" src="${n.figure}" alt="문제 그림">` : ""}
     ${choicesHTML(n.choices)}
     <div class="ans">
-      ${n.myAnswer ? `<div class="mine">내 답: ${rich(n.myAnswer)}</div>` : ""}
+      ${n.myAnswer ? `<div class="mine ${mineOk ? "ok" : ""}">내 답: ${rich(n.myAnswer)}</div>` : ""}
       <div class="right">정답: ${rich(n.correctAnswer || "(없음)")}${n.answerFromAI ? ` <span class="muted small">(AI가 푼 답)</span>` : ""}</div>
     </div>
-    ${n.wrongReason || n.explanation ? `<details class="exp"><summary>틀린 이유와 풀이</summary>
-      ${n.wrongReason ? `<p><b>틀린 이유</b><br>${rich(n.wrongReason)}</p>` : ""}
+    ${n.wrongReason || n.explanation ? `<details class="exp"><summary>${n.wrongReason && !mineOk ? "틀린 이유와 풀이" : "풀이"}</summary>
+      ${n.wrongReason && !mineOk ? `<p><b>틀린 이유</b><br>${rich(n.wrongReason)}</p>` : ""}
       ${n.explanation ? `<p><b>풀이</b><br>${rich(n.explanation)}</p>` : ""}</details>` : ""}
     ${parent ? `<p class="muted small">원래 문제: ${esc(parent.question.slice(0, 40))}…</p>` : ""}
     <div class="note-actions">

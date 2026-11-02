@@ -95,6 +95,8 @@ main{max-width:760px;margin:0 auto;padding:18px 14px 104px 56px}
 .ans{margin-top:8px;display:grid;gap:2px}
 .ans .mine{color:var(--red);text-decoration:line-through;text-decoration-color:rgba(224,70,95,.6)}
 .ans .mine::after{content:" ✗";text-decoration:none;display:inline-block}
+.ans .mine.ok{color:var(--green);text-decoration:none}
+.ans .mine.ok::after{content:" ✓"}
 .ans .right{color:var(--green);font-weight:700}
 .ans .right .muted{font-weight:400}
 details.exp{margin-top:8px;background:rgba(53,103,201,.05);border-left:3px solid var(--blue);padding:4px 10px}

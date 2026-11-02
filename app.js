@@ -52,7 +52,7 @@ export function normAnswer(s) {
 }
 
 // ───────── 상태 ─────────
-const state = { user: null, nb: null, notebooks: [], notes: [], view: "list", photo: null, recog: [], retry: null };
+const state = { keepShown: new Set(), user: null, nb: null, notebooks: [], notes: [], view: "list", photo: null, recog: [], retry: null };
 const grade = () => (state.nb && state.nb.grade) || "";
 const subjColor = (s) => (SUBJECT_COLORS && SUBJECT_COLORS[s]) || "#9aa3ad";
 let listSubject = "all";
@@ -307,6 +307,8 @@ async function loadNotes() {
   try {
     const snap = await getDocs(query(notesCol(), orderBy("createdAt", "desc")));
     state.notes = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+    // 예전 규칙(두 번 연속)으로 한 번 맞힌 채 남아 있던 문제는 익힘으로
+    state.notes.filter((n) => n.status !== "mastered" && (n.correctStreak || 0) >= 1).forEach((n) => patchNote(n.id, { status: "mastered" }).catch(() => {}));
   } catch (e) { toast("불러오지 못했어요: " + (e.code || e.message)); }
   busy(false);
 }
@@ -339,6 +341,7 @@ function show(view) {
   document.querySelectorAll(".view").forEach((v) => v.classList.add("hidden"));
   $("#view-" + view).classList.remove("hidden");
   document.body.classList.toggle("list-mode", view === "list");
+  state.keepShown.clear();
   document.querySelectorAll("#tabs button").forEach((b) => b.classList.toggle("on", b.dataset.view === view));
   if (view === "list") renderList();
   if (view === "retry") { if (!state.retry) { $("#retrySetup").classList.remove("hidden"); $("#retryPlay").classList.add("hidden"); } updateRetryAvail(); }
@@ -402,10 +405,10 @@ function readAnswer(root, n) {
   const t = box.querySelector(".txt").value.trim(); return t ? { given: t, cands: [t] } : null;
 }
 const judgeAnswer = (n, a) => { const right = normAnswer(n.correctAnswer); return !!right && a.cands.some((c) => normAnswer(c) === right); };
-// 푼 기록 남기기 (두 번 연속 맞히면 익힘)
+// 푼 기록 남기기 (맞히면 익힘, 틀리면 틀린 횟수 +1)
 function solvedData(n, ok, given) {
   const data = { tryCount: (n.tryCount || 0) + 1, lastTriedAt: Date.now(), lastAnswer: given || "" };
-  if (ok) { data.correctStreak = (n.correctStreak || 0) + 1; if (data.correctStreak >= 2) data.status = "mastered"; }
+  if (ok) { data.correctStreak = (n.correctStreak || 0) + 1; data.status = "mastered"; }
   else { data.correctStreak = 0; data.status = "wrong"; data.wrongCount = (n.wrongCount || 0) + 1; }
   return data;
 }
@@ -502,7 +505,12 @@ function fillYearSelect(sel) {
 }
 function renderList() {
   renderStats();
-  const list = filtered({ subject: listSubject, status: $("#fStatus").value, similar: $("#fSimilar").checked, search: $("#fSearch").value, year: listYear });
+  let list = filtered({ subject: listSubject, status: $("#fStatus").value, similar: $("#fSimilar").checked, search: $("#fSearch").value, year: listYear });
+  // 방금 푼 문제는 "익힘"으로 넘어가도 풀이를 볼 수 있게 이 화면에서는 잠깐 남겨 두기
+  if (state.keepShown.size) {
+    const extra = state.notes.filter((n) => state.keepShown.has(n.id) && !list.includes(n));
+    if (extra.length) list = state.notes.filter((n) => list.includes(n) || extra.includes(n));
+  }
   const st = { wrong: "아직 틀린", mastered: "익힌", all: "모은" }[$("#fStatus").value];
   const yName = listYear === "all" ? "" : `${listYear}학년도 · `;
   $("#secTitle").innerHTML = state.notes.length ? `<span class="sec-mark" style="background:${listSubject === "all" ? "var(--ink)" : subjColor(listSubject)}"></span>${yName}${listSubject === "all" ? "전체" : esc(listSubject)} · ${st} ${list.length}문제` : "";
@@ -541,11 +549,13 @@ $("#noteList").addEventListener("click", async (e) => {
     if (a.error) { toast(a.error); return; }
     const ok = judgeAnswer(n, a);
     try { await patchNote(id, { ...solvedData(n, ok, a.given), myAnswer: a.given }); } catch (e) { toast("기록하지 못했어요: " + (e.code || e.message)); return; }
-    toast(ok ? "맞았어요! 한 번 더 맞히면 익힘이 돼요" : "아쉬워요. 정답과 풀이를 확인해 봐요", 3500);
+    toast(ok ? "맞았어요! 익힌 문제로 옮겼어요" : "아쉬워요. 정답과 풀이를 확인해 봐요", 3500);
+    state.keepShown.add(id);
     renderList();
     const again = document.querySelector(`.note[data-id="${id}"] details.exp`); if (again && !ok) again.open = true;
   } else if (act === "fixok") {
-    await patchNote(id, { myAnswerOk: true, correctStreak: (n.correctStreak || 0) + 1, wrongCount: Math.max(0, (n.wrongCount || 1) - 1) });
+    await patchNote(id, { myAnswerOk: true, status: "mastered", correctStreak: (n.correctStreak || 0) + 1, wrongCount: Math.max(0, (n.wrongCount || 1) - 1) });
+    state.keepShown.add(id);
     renderList(); toast("맞은 답으로 고쳤어요");
   } else if (act === "similar") {
     askNotifyOnce();
@@ -1101,7 +1111,7 @@ function renderRetry() {
   if (r.i >= r.ids.length) {
     box.innerHTML = `<div class="card center"><h2>다 풀었어요</h2>
       <div class="result-big">${r.right} / ${r.ids.length}</div>
-      <p class="muted">맞힌 문제는 한 번 더 맞히면 "익힘"이 돼요.</p>
+      <p class="muted">맞힌 문제는 "익힘"으로 옮겼어요. 틀린 문제는 다음에 또 나와요.</p>
       <button class="btn primary big" id="btnRetryEnd">처음으로</button></div>`;
     $("#btnRetryEnd").onclick = () => { state.retry = null; show("retry"); };
     return;
@@ -1154,7 +1164,6 @@ async function finishOne(n, ok) {
   if (ok) r.right++;
   const data = solvedData(n, ok);
   try { await patchNote(n.id, data); } catch (e) { toast("기록하지 못했어요: " + (e.code || e.message)); }
-  if (ok && data.status === "mastered") toast("두 번 연속 맞혀서 익힘이 됐어요");
   r.i++; renderRetry();
 }
 

@@ -501,7 +501,10 @@ function renderStats() {
   const done = pool.length - wrong;
   const bySub = {};
   pool.forEach((n) => { if (n.status !== "mastered") bySub[n.subject] = (bySub[n.subject] || 0) + 1; });
-  $("#stats").innerHTML = `<div class="stat red"><b>${wrong}</b>아직 틀림</div><div class="stat green"><b>${done}</b>익힘</div>`;
+  // 칸을 누르면 그 문제들만 보기 (아직 틀림 / 익힘 / 모두)
+  const st = $("#fStatus").value;
+  const box = (key, cls, num, label) => `<button type="button" class="stat ${cls} ${st === key ? "on" : ""}" data-st="${key}"><b>${num}</b>${label}</button>`;
+  $("#stats").innerHTML = box("all", "", pool.length, "전체") + box("wrong", "red", wrong, "아직 틀림") + box("mastered", "green", done, "익힘");
   // 오른쪽 과목 색 띠지
   const subs = SUBJECTS.filter((s) => pool.some((n) => n.subject === s));
   if (listSubject !== "all" && !subs.includes(listSubject)) listSubject = "all";
@@ -543,6 +546,10 @@ function renderList() {
   typeset(box);
 }
 ["#fStatus", "#fSimilar"].forEach((s) => ($(s).onchange = renderList));
+$("#stats").addEventListener("click", (e) => {
+  const b = e.target.closest("[data-st]"); if (!b) return;
+  $("#fStatus").value = b.dataset.st; renderList();
+});
 $("#yearTabs").addEventListener("click", (e) => {
   const t = e.target.closest("[data-year]"); if (!t) return;
   listYear = t.dataset.year === "all" ? "all" : +t.dataset.year; renderList(); window.scrollTo({ top: 0, behavior: "smooth" });

@@ -74,6 +74,9 @@ main{max-width:760px;margin:0 auto;padding:18px 14px 104px 56px}
 .stat{flex:0 0 auto;background:var(--paper2);border:1.5px solid #e6e0d2;border-radius:var(--wobble);padding:4px 14px;font-size:15px;min-width:80px;text-align:center}
 .stat b{display:block;font-size:28px;line-height:1.1;font-family:var(--pen);font-weight:400}
 .stat.red b{color:var(--red)} .stat.green b{color:var(--green)}
+#stats{display:grid;grid-template-columns:repeat(3,1fr);gap:10px;overflow:visible}
+button.stat{cursor:pointer;font:inherit;color:inherit;transition:transform .12s;min-width:0;padding:6px 4px 8px}
+.stat.on{border:2.5px solid var(--ink);transform:translateY(-3px) rotate(-1deg);box-shadow:2px 4px 0 rgba(43,52,69,.18)}
 .filters{display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:8px}
 .filters select,.search,.form-grid input,.form-grid select,.edit input,.edit select,.edit textarea,.answer-in{
   border:0;border-bottom:2px solid var(--pencil);border-radius:0;padding:6px 4px;background:transparent;width:auto;outline:none}

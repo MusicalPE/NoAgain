@@ -18,9 +18,9 @@ export const FIREBASE_CONFIG = {
 export const RECAPTCHA_SITE_KEY = "6LfyygQuAAAAANi6jh6_u3kexVPJN1zu7d_JcOAA";
 
 // 3) 사용할 AI 모델 이름 (앞에서부터 차례로 시도, 붐비거나 안 되면 다음 모델로)
-//    AI_MODELS_FAST : 사진 읽기용 — 빠른 모델 먼저
+//    AI_MODELS_FAST : 사진 읽기용 — 빠르면서 직접 풀어도 정확한 모델 먼저
 //    AI_MODELS      : 비슷한 문제 만들기용 — 정확한 모델 먼저
-export const AI_MODELS_FAST = ["gemini-3.5-flash-lite", "gemini-3.6-flash", "gemini-2.5-flash", "gemini-3.8-flash"];
+export const AI_MODELS_FAST = ["gemini-3.6-flash", "gemini-2.5-flash", "gemini-3.8-flash", "gemini-3.5-flash-lite"];
 export const AI_MODELS = ["gemini-3.8-flash", "gemini-3.6-flash", "gemini-2.5-flash", "gemini-3.5-flash-lite"];
 
 // 앱 이름 (화면 위쪽과 시험지에 나옵니다)

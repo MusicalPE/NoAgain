@@ -114,15 +114,15 @@ function withTimeout(promise, ms, label) {
   return Promise.race([promise, new Promise((_, no) => { timer = setTimeout(() => no(new Error("timeout: " + label)), ms); })])
     .finally(() => clearTimeout(timer));
 }
-// 생각을 짧게 하도록 (모델이 이 설정을 모르면 빼고 다시)
-const THINK = { thinkingConfig: { thinkingBudget: 0 } };
+// 생각 시간 정하기: 0 = 바로 답하기(점검용), 숫자가 클수록 꼼꼼히 풀기 (모델이 이 설정을 모르면 빼고 다시)
+const THINK = (budget) => ({ thinkingConfig: { thinkingBudget: budget } });
 const THINK_RE = /thinking|budget|invalid.?argument|\b400\b/i;
 const noThink = new Set();
-async function callModel(name, parts, temperature, json = true, ms = 60000) {
+async function callModel(name, parts, temperature, json = true, ms = 60000, think = 0) {
   const base = { temperature, ...(json ? { responseMimeType: "application/json" } : {}) };
   const run = (cfg) => withTimeout(getGenerativeModel(ai, { model: name, generationConfig: cfg }).generateContent(parts), ms, `${name} 응답이 ${ms / 1000}초 넘게 없었어요`);
   if (!noThink.has(name)) {
-    try { return await run({ ...base, ...THINK }); }
+    try { return await run({ ...base, ...THINK(think) }); }
     catch (e) { if (!THINK_RE.test(String(e?.message || e))) throw e; noThink.add(name); }
   }
   return run(base);
@@ -136,7 +136,7 @@ function orderModels(list) {
   const m = restMap(), now = Date.now();
   return [...list.filter((n) => !(m[n] > now)), ...list.filter((n) => m[n] > now)];
 }
-async function askAI(parts, temperature = 0.2, onStep, list = AI_MODELS) {
+async function askAI(parts, temperature = 0.2, onStep, list = AI_MODELS, opt = {}) {
   let lastErr;
   const models = orderModels(list);
   for (let i = 0; i < models.length; i++) {
@@ -144,7 +144,7 @@ async function askAI(parts, temperature = 0.2, onStep, list = AI_MODELS) {
     try {
       if (onStep) onStep(name, i);
       const t = Date.now();
-      const res = await callModel(name, parts, temperature, true, 45000);
+      const res = await callModel(name, parts, temperature, true, opt.timeout || 60000, opt.think ?? 2048);
       state.lastAI = { model: name, sec: Math.round((Date.now() - t) / 1000) };
       return parseJSON(res.response.text());
     } catch (e) {
@@ -450,6 +450,7 @@ function noteCard(n) {
       ${n.unit ? `<span class="tag">${esc(n.unit)}</span>` : ""}
       ${n.type ? `<span class="tag">${esc(n.type)}</span>` : ""}
       ${n.source === "ai" ? `<span class="tag ai">비슷한 문제</span>` : ""}
+      ${n.aiJudged && n.myAnswer ? `<span class="tag ai">AI가 채점</span>` : ""}
       ${n.status === "mastered" ? `<span class="tag ok">익힘</span>` : `<span class="tag wrong">${n.wrongCount ? `틀림 ${n.wrongCount}번` : "연습할 문제"}</span>`}
       <span class="muted small" style="margin-left:auto">${(state.nb.members || []).length > 1 && n.addedByName ? esc(n.addedByName) + " · " : ""}${fmtDate(n.createdAt)}</span>
     </div>
@@ -468,6 +469,7 @@ function noteCard(n) {
     ${parent ? `<p class="muted small">원래 문제: ${esc(parent.question.slice(0, 40))}…</p>` : ""}
     <div class="note-actions">
       <button class="btn sm" data-act="similar">비슷한 문제 ${SIMILAR_COUNT}개 더</button>
+      ${n.answerFromAI && !practice ? `<button class="btn sm" data-act="resolve">AI 다시 풀기</button>` : ""}
       <button class="btn sm" data-act="toggle">${n.status === "mastered" ? "다시 틀림으로" : "익힘으로"}</button>
       <button class="btn sm" data-act="edit">고치기</button>
       <button class="btn sm ghost" data-act="del">지우기</button>
@@ -576,6 +578,16 @@ $("#noteList").addEventListener("click", async (e) => {
     await patchNote(id, { myAnswerOk: true, status: "mastered", correctStreak: (n.correctStreak || 0) + 1, wrongCount: Math.max(0, (n.wrongCount || 1) - 1) });
     state.keepShown.add(id);
     renderList(); toast("맞은 답으로 고쳤어요");
+  } else if (act === "resolve") {
+    const est = estSec("resolve");
+    const t0 = Date.now(), tick = setInterval(() => busy(true, `AI가 꼼꼼히 다시 푸는 중\n${leftText(est - (Date.now() - t0) / 1000)}`), 1000);
+    busy(true, `AI가 꼼꼼히 다시 푸는 중\n${leftText(est)}`);
+    try {
+      const r = await resolveNote(n);
+      recordSec("resolve", (Date.now() - t0) / 1000);
+      toast(r, 4500); renderList();
+    } catch (err) { logErr("다시 풀기", err); toast(aiErrorText(err), 8000); }
+    clearInterval(tick); busy(false);
   } else if (act === "similar") {
     askNotifyOnce();
     enqueueSimilar([n]);
@@ -783,22 +795,26 @@ function recognizePrompt() {
    답 칸 밖의 계산 낙서는 학생 답으로 보지 않는다. 다만 wrongReason 을 쓸 때 어디서 틀렸는지 짐작하는 데는 참고해도 된다.
    figureBox 는 인쇄된 그림만 감싸고, 그 위의 손글씨는 되도록 피한다.
 2. 사진 속 문제를 하나하나 찾는다. 잘려서 다 보이지 않는 문제는 빼고, 온전히 보이는 문제만 정리한다.
-3. 채점 표시(빗금, X표, 빨간 줄, 세모)가 있으면 그것으로 틀린 문제를 판단한다. 동그라미는 맞은 문제다. 채점 표시가 없으면 학생 답과 정답을 비교해 판단한다.
+3. 채점 표시(빗금, X표, 빨간 줄, 세모)가 있으면 그것으로 틀린 문제를 판단하고 graded 를 true 로 한다. 동그라미는 맞은 문제다.
+   채점 표시가 없으면 graded 는 false. 이때는 직접 꼼꼼히 푼 답과 학생 답을 비교하되, 학생 답이 맞을 수도 있다는 생각으로 두 번 확인한 뒤에만 isWrong 을 true 로 한다.
 4. 정답이 사진에 없으면 직접 풀어서 정답을 쓰고 answerFromAI 를 true 로 한다.
+   수직선·그림 문제는 큰 눈금 사이가 몇 칸으로 나뉘었는지, 화살표가 몇 번째 눈금인지 먼저 정확히 센 뒤 푼다.
+   정답은 하나만 쓴다("또는" 쓰지 않기). 분자가 0이면 자연수로 쓴다.
 5. 수식은 LaTeX 로 쓰고 $...$ 로 감싼다(예: $\\frac{3}{4}+\\frac{1}{8}$). 수식이 아닌 글은 그대로 쓴다.
 6. 보기(①②③…)는 question 에 넣지 말고 choices 배열에 앞 번호 없이 넣는다. 정답이 보기 중 하나면 correctAnswer 는 "③" 처럼 번호로 쓴다.
 7. 문제에 그림·도형·그래프·표·지도처럼 글로 옮기기 어려운 부분이 있으면 hasFigure 를 true 로 하고, 그 부분이 사진 어디에 있는지 figureBox 에 [ymin, xmin, ymax, xmax] (사진 전체를 0~1000 으로 본 비율)로 적는다. 글로 옮길 수 있는 짧은 표는 question 안에 글로 적는다.
 8. wrongReason 은 학생 답을 보고 왜 틀렸을지 학생 눈높이로 한두 문장, explanation 은 학생 눈높이의 단계별 풀이로 쓴다.
+   explanation 에는 다 확인한 최종 풀이만 쓴다. "아, 다시 보니", "만약 ~였다면" 처럼 고쳐 생각한 흔적은 쓰지 않는다. 풀이 끝의 답과 correctAnswer 가 꼭 같아야 한다.
 9. subject 는 다음 중 하나: ${SUBJECTS.join(", ")}
 
 아래 JSON 하나만 출력한다.
-{"rotate":0,"problems":[{"number":"문제 번호","subject":"과목","unit":"단원(짐작)","type":"문제 유형(짧게)","question":"문제 글","choices":[],"myAnswer":"학생이 쓴 답, 없으면 빈 문자열","correctAnswer":"정답","answerFromAI":false,"isWrong":true,"wrongReason":"","explanation":"","hasFigure":false,"figureBox":[]}]}`;
+{"rotate":0,"problems":[{"number":"문제 번호","subject":"과목","unit":"단원(짐작)","type":"문제 유형(짧게)","question":"문제 글","choices":[],"myAnswer":"학생이 쓴 답, 없으면 빈 문자열","correctAnswer":"정답","answerFromAI":false,"isWrong":true,"graded":true,"wrongReason":"","explanation":"","hasFigure":false,"figureBox":[]}]}`;
 }
 
 async function readPhotoOnce() {
   const b64 = state.photo.canvas.toDataURL("image/jpeg", 0.8).split(",")[1];
   const out = await askAI([recognizePrompt(), { inlineData: { data: b64, mimeType: "image/jpeg" } }], 0.2,
-    (name, i) => { state.aiNote = i > 0 ? ` (붐벼서 ${name.replace("gemini-", "")}로 다시)` : ""; }, AI_MODELS_FAST);
+    (name, i) => { state.aiNote = i > 0 ? ` (붐벼서 ${name.replace("gemini-", "")}로 다시)` : ""; }, AI_MODELS_FAST, { think: 2048, timeout: 75000 });
   const probs = Array.isArray(out.problems) ? out.problems.filter((p) => p && p.question) : [];
   const rot = [90, 180, 270].includes(+out.rotate) ? +out.rotate : 0;
   if (rot && probs.length) {
@@ -851,6 +867,7 @@ function renderRecog() {
       <div class="note-head">
         <label class="chk" style="margin:0"><input type="checkbox" data-keep ${p.keep ? "checked" : ""}> <b>${esc(p.number || i + 1)}번 저장</b></label>
         ${p.isWrong === false ? `<span class="tag ok">맞은 문제</span>` : `<span class="tag wrong">틀린 문제</span>`}
+        ${p.graded === false && p.myAnswer ? `<span class="tag ai">채점 표시 없음 · AI가 판단</span>` : ""}
         ${p.answerFromAI ? `<span class="tag ai">정답은 AI가 풂</span>` : ""}
       </div>
       ${editFormHTML(p, "r" + i)}
@@ -907,7 +924,7 @@ async function saveRecog() {
       const note = await addNote({
         subject: p.subject, unit: p.unit || "", type: p.type || "", question: p.question, choices: p.choices || [],
         myAnswer: p.myAnswer || "", correctAnswer: p.correctAnswer || "", answerFromAI: !!p.answerFromAI,
-        wrongReason: p.wrongReason || "", explanation: p.explanation || "", figure: p.figure || "", source: "photo",
+        wrongReason: p.wrongReason || "", explanation: p.explanation || "", figure: p.figure || "", source: "photo", aiJudged: p.graded === false,
         status: p.isWrong === false ? "mastered" : "wrong", wrongCount: p.isWrong === false ? 0 : 1
       });
       saved++; savedNotes.push(note);
@@ -943,6 +960,36 @@ function cropEditor(canvas, initBox) {
 }
 
 // ───────── 비슷한 문제 만들기 ─────────
+// 정답·풀이가 이상할 때: 더 꼼꼼한 모델이 시간을 들여 다시 풀기
+async function resolveNote(n) {
+  const prompt = `너는 초등학교 선생님이다. 아래 문제를 처음부터 아주 꼼꼼히 다시 푼다. 앞서 누가 쓴 답은 틀렸을 수 있으니 믿지 않는다.
+학생 학년: ${grade() || "모름"}
+- 그림이 있으면 그림을 먼저 정확히 읽는다. 수직선은 큰 눈금 사이가 몇 칸인지, 화살표가 몇 번째 눈금인지 센다.
+- 다 푼 뒤 검산한다. 정답은 하나만, 초등 교과서 표기로 쓴다(분자가 0이면 자연수). 수식은 LaTeX 를 $...$ 로 감싼다.
+- explanation 은 학생 눈높이의 단계별 최종 풀이만 쓴다(고쳐 생각한 흔적 쓰지 않기). 풀이 끝의 답과 correctAnswer 가 같아야 한다.
+- 학생 답이 있으면 값이 같은지 비교해 studentCorrect 에 true/false. 틀렸으면 wrongReason 에 왜 틀렸을지 한두 문장.
+
+문제: ${n.question}
+보기: ${(n.choices || []).join(" | ") || "없음"}
+${n.figureSpec ? "그림 설계도: " + (typeof n.figureSpec === "string" ? n.figureSpec : JSON.stringify(n.figureSpec)) : n.figure ? "(그림은 함께 보낸 사진)" : ""}
+학생 답: ${n.myAnswer || "없음"}
+
+아래 JSON 하나만 출력한다.
+{"correctAnswer":"","explanation":"","studentCorrect":false,"wrongReason":""}`;
+  const parts = [prompt];
+  if (n.figure && /^data:image\/jpeg;base64,/.test(n.figure)) parts.push({ inlineData: { data: n.figure.split(",")[1], mimeType: "image/jpeg" } });
+  const out = await askAI(parts, 0.1, null, AI_MODELS, { think: 8192, timeout: 120000 });
+  if (!out || !out.correctAnswer) throw new Error("AI가 답을 돌려주지 않았어요");
+  const ans = fixMath(String(out.correctAnswer));
+  const okKid = !!n.myAnswer && (out.studentCorrect === true || judgeAnswer({ correctAnswer: ans }, { cands: [n.myAnswer] }));
+  const changed = normAnswer(ans) !== normAnswer(n.correctAnswer);
+  await patchNote(n.id, {
+    correctAnswer: ans, explanation: String(out.explanation || ""), answerFromAI: true,
+    wrongReason: okKid ? "" : String(out.wrongReason || n.wrongReason || ""), myAnswerOk: okKid
+  });
+  return (changed ? `정답을 ${ans.replace(/\$/g, "")}(으)로 고쳤어요` : "정답은 그대로예요. 풀이를 새로 썼어요") + (n.myAnswer ? (okKid ? ". 아이 답이 맞아요" : ". 아이 답은 다시 봐야 해요") : "");
+}
+
 async function makeSimilar(n, count) {
   const prompt = `너는 학생에게 연습 문제를 내 주는 선생님이다. 아래 "원래 문제"와 같은 유형의 새 문제를 ${count}개 만든다.
 학생 학년: ${grade() || "원래 문제 수준에 맞춤"}
@@ -970,7 +1017,7 @@ async function makeSimilar(n, count) {
 - 정답은 초등 교과서 표기로 쓴다. 분자가 0이면 분수로 쓰지 않는다(2와 5분의 0 → 2). 대분수의 분수 부분은 진분수로 쓴다.
   답이 자연수로 떨어지는 문제를 만들 때는 그게 의도한 것인지 다시 확인한다.
 - 수식은 LaTeX 로 쓰고 $...$ 로 감싼다.
-- explanation 은 학생 눈높이의 단계별 풀이.
+- explanation 은 학생 눈높이의 단계별 풀이. 다 확인한 최종 풀이만 쓰고, 고쳐 생각한 흔적("아, 다시 보니")은 쓰지 않는다. 풀이 끝의 답과 correctAnswer 가 같아야 한다.
 
 원래 문제
 과목: ${n.subject} / 단원: ${n.unit} / 유형: ${n.type}
@@ -983,7 +1030,7 @@ ${n.figureSpec ? "원래 문제의 그림 설계도: " + (typeof n.figureSpec ==
 {"problems":[{"question":"","figure":null,"choices":[],"correctAnswer":"","explanation":""}]}`;
   const parts = [prompt];
   if (n.figure && /^data:image\/jpeg;base64,/.test(n.figure)) parts.push({ inlineData: { data: n.figure.split(",")[1], mimeType: "image/jpeg" } });
-  const out = await askAI(parts, 0.7);
+  const out = await askAI(parts, 0.7, null, AI_MODELS, { think: 4096, timeout: 90000 });
   // 답 모양이 조금 달라도 받아 주기: {problems:[…]} / […] / {problem:{…}} / {question:…}
   const list = Array.isArray(out) ? out : Array.isArray(out?.problems) ? out.problems : out?.problem ? [out.problem] : out?.question ? [out] : [];
   const probs = list.filter((p) => p && p.question).slice(0, count);
@@ -1008,7 +1055,7 @@ ${n.figureSpec ? "원래 문제의 그림 설계도: " + (typeof n.figureSpec ==
 }
 
 // ───────── 걸린 시간 기억해서 예상 시간 알려 주기 ─────────
-const EST_DEFAULT = { read: 25, similar: 25 };
+const EST_DEFAULT = { read: 30, similar: 35, resolve: 40 };
 function estSec(kind) { try { return JSON.parse(localStorage.getItem("odapEst") || "{}")[kind] || EST_DEFAULT[kind]; } catch (_) { return EST_DEFAULT[kind]; } }
 function recordSec(kind, sec) {
   try { const m = JSON.parse(localStorage.getItem("odapEst") || "{}"); m[kind] = Math.round((m[kind] || sec) * 0.6 + sec * 0.4); localStorage.setItem("odapEst", JSON.stringify(m)); } catch (_) {}

@@ -70,18 +70,35 @@ const ai = getAI(app, { backend: new GoogleAIBackend() });
 const notesCol = () => collection(db, "notebooks", state.nb.id, "notes");
 
 // ───────── AI 부르기 ─────────
+// AI가 수식의 \ 를 하나만 써서 JSON이 깨지거나(\d, \c …), 다른 글자로 바뀌는(\frac → 줄바꿈 기호) 것 바로잡기
+function fixTeX(v) {
+  if (typeof v === "string") return v.replace(/\f/g, "\\f").replace(/\x08/g, "\\b").replace(/\t/g, "\\t").replace(/\r/g, "\\r");
+  if (Array.isArray(v)) return v.map(fixTeX);
+  if (v && typeof v === "object") { const o = {}; for (const k in v) o[k] = fixTeX(v[k]); return o; }
+  return v;
+}
 function parseJSON(text) {
   let t = String(text || "").trim().replace(/^```(?:json)?/i, "").replace(/```$/, "").trim();
-  try { return JSON.parse(t); } catch (_) {
-    const a = t.indexOf("{"), b = t.lastIndexOf("}");
-    if (a >= 0 && b > a) return JSON.parse(t.slice(a, b + 1));
-    throw new Error("AI 답을 읽지 못했어요");
-  }
+  const tries = [t];
+  const a = t.search(/[{[]/), b = Math.max(t.lastIndexOf("}"), t.lastIndexOf("]"));
+  if (a >= 0 && b > a) tries.push(t.slice(a, b + 1));
+  for (const x of [...tries]) tries.push(x.replace(/\\(?!["\\/bfnrtu])/g, "\\\\"));
+  for (const x of tries) { try { return fixTeX(JSON.parse(x)); } catch (_) {} }
+  throw new Error("AI 답을 읽지 못했어요: " + t.slice(0, 60));
 }
 // 오류 구분: "generateContent" 안의 "rate" 같은 글자에 걸리지 않게 낱말 단위로 찾기
 const QUOTA_RE = /quota|\b429\b|exhausted|rate.?limit|too many requests/i;
 const BUSY_RE = /high demand|overloaded|unavailable|try again later|\b50[03]\b|\b504\b|deadline/i;
 const NO_MODEL_RE = /not found|\b404\b|not supported|unsupported|is not available|invalid model/i;
+// 최근 오류 기억해 두기 (설정 > AI 연결 점검에서 보임)
+function logErr(where, e) {
+  try {
+    const list = JSON.parse(localStorage.getItem("odapErrors") || "[]");
+    list.unshift({ t: Date.now(), where, msg: String(e?.message || e).slice(0, 300) });
+    localStorage.setItem("odapErrors", JSON.stringify(list.slice(0, 5)));
+  } catch (_) {}
+}
+
 // 시간 제한을 걸어 기다리기
 function withTimeout(promise, ms, label) {
   let timer;
@@ -571,7 +588,7 @@ function openEdit(n) {
   $("#mCancel").onclick = closeModal;
   $("#mSave").onclick = async () => {
     const data = readForm(root);
-    if ($("#mDropFig")?.checked) { data.figure = ""; data.figureSpec = null; }
+    if ($("#mDropFig")?.checked) { data.figure = ""; data.figureSpec = ""; }
     try { await patchNote(n.id, data); closeModal(); renderList(); toast("저장했어요"); }
     catch (e) { toast("저장하지 못했어요: " + (e.code || e.message)); }
   };
@@ -648,7 +665,13 @@ function openSettings() {
 // AI 연결 점검: 어디서 멈추는지 단계별로 보여 주기
 async function openDiag() {
   openModal(`<h2>AI 연결 점검</h2><p class="muted small">한 단계씩 확인해요. 끝나면 이 화면을 캡처해 주세요.</p>
-    <ol id="diagList" class="diag"></ol><div class="row" style="margin-top:10px"><button class="btn" id="dBack">돌아가기</button></div>`);
+    <ol id="diagList" class="diag"></ol>
+    <h3 style="margin-top:12px">최근 오류</h3><div id="diagErr" class="muted small"></div>
+    <div class="row" style="margin-top:10px"><button class="btn" id="dBack">돌아가기</button></div>`);
+  try {
+    const errs = JSON.parse(localStorage.getItem("odapErrors") || "[]");
+    $("#diagErr").innerHTML = errs.length ? errs.map((x) => { const d = new Date(x.t); return `<p class="err-line">${d.getMonth() + 1}.${d.getDate()} ${d.getHours()}:${String(d.getMinutes()).padStart(2, "0")} · ${esc(x.where)}<br>${esc(x.msg)}</p>`; }).join("") : "없어요";
+  } catch (_) {}
   $("#dBack").onclick = () => openSettings();
   const line = (label) => { const li = document.createElement("li"); li.innerHTML = `${esc(label)} <span class="muted">확인 중…</span>`; $("#diagList").appendChild(li); return li; };
   const done = (li, ok, text) => { li.querySelector("span").outerHTML = `<b class="${ok ? "ok" : "no"}">${ok ? "통과" : "멈춤"}</b> <span class="muted small">${esc(text)}</span>`; };
@@ -779,7 +802,7 @@ $("#btnRecognize").onclick = async () => {
     if (!probs.length) $("#recogResult").innerHTML = `<div class="card"><h3>문제를 찾지 못했어요</h3>
       <p class="muted">위의 돌리기 단추로 글자가 바로 서게 맞춘 뒤 다시 눌러 보세요.<br>
       그래도 안 되면 문제 2~3개만 나오게 가까이, 밝은 곳에서, 그림자 없이 찍어 주세요.</p></div>`;
-  } catch (e) { toast(aiErrorText(e), 8000); }
+  } catch (e) { logErr("사진 읽기", e); toast(aiErrorText(e), 8000); }
   clearInterval(tick);
   busy(false);
 };
@@ -917,25 +940,34 @@ async function makeSimilar(n, count) {
 문제: ${n.question}
 보기: ${(n.choices || []).join(" | ") || "없음"}
 정답: ${n.correctAnswer}
-${n.figureSpec ? "원래 문제의 그림 설계도: " + JSON.stringify(n.figureSpec) : n.figure ? "(원래 문제에는 함께 보낸 그림이 있다)" : ""}
+${n.figureSpec ? "원래 문제의 그림 설계도: " + (typeof n.figureSpec === "string" ? n.figureSpec : JSON.stringify(n.figureSpec)) : n.figure ? "(원래 문제에는 함께 보낸 그림이 있다)" : ""}
 
 아래 JSON 하나만 출력한다.
 {"problems":[{"question":"","figure":null,"choices":[],"correctAnswer":"","explanation":""}]}`;
   const parts = [prompt];
   if (n.figure && /^data:image\/jpeg;base64,/.test(n.figure)) parts.push({ inlineData: { data: n.figure.split(",")[1], mimeType: "image/jpeg" } });
   const out = await askAI(parts, 0.7);
-  const probs = (Array.isArray(out.problems) ? out.problems : []).filter((p) => p && p.question).slice(0, count);
+  // 답 모양이 조금 달라도 받아 주기: {problems:[…]} / […] / {problem:{…}} / {question:…}
+  const list = Array.isArray(out) ? out : Array.isArray(out?.problems) ? out.problems : out?.problem ? [out.problem] : out?.question ? [out] : [];
+  const probs = list.filter((p) => p && p.question).slice(0, count);
+  if (!probs.length) throw new Error("AI가 문제를 돌려주지 않았어요: " + JSON.stringify(out).slice(0, 60));
+  let saved = 0, lastErr = null;
   for (const p of probs) {
-    const spec = p.figure && typeof p.figure === "object" ? p.figure : null;
+    const spec = p.figure && typeof p.figure === "object" && !Array.isArray(p.figure) ? p.figure : null;
     const pic = spec ? drawFigure(spec) : "";
-    await addNote({
-      figure: pic, figureSpec: pic ? spec : null,
-      subject: n.subject, unit: n.unit, type: n.type, question: String(p.question),
-      choices: Array.isArray(p.choices) ? p.choices.map(String) : [], correctAnswer: String(p.correctAnswer ?? ""),
-      answerFromAI: true, explanation: String(p.explanation ?? ""), source: "ai", parentId: n.id, wrongCount: 0, status: "wrong"
-    });
+    try {
+      await addNote({
+        // 파이어베이스는 [[…]] 처럼 겹친 목록을 저장하지 못해서 설계도는 글자로 바꿔 저장
+        figure: pic, figureSpec: pic ? JSON.stringify(spec) : "",
+        subject: n.subject, unit: n.unit, type: n.type, question: String(p.question),
+        choices: Array.isArray(p.choices) ? p.choices.map((c) => String(c ?? "")) : [], correctAnswer: String(p.correctAnswer ?? ""),
+        answerFromAI: true, explanation: String(p.explanation ?? ""), source: "ai", parentId: n.id, wrongCount: 0, status: "wrong"
+      });
+      saved++;
+    } catch (e) { lastErr = e; }
   }
-  return probs.length;
+  if (!saved && lastErr) throw lastErr;
+  return saved;
 }
 
 // ───────── 걸린 시간 기억해서 예상 시간 알려 주기 ─────────
@@ -979,6 +1011,7 @@ async function runJobs() {
     renderJobChip();
     try { jobs.made += await makeSimilar(n, SIMILAR_COUNT); recordSec("similar", (Date.now() - jobs.started) / 1000); }
     catch (e) {
+      logErr("비슷한 문제 만들기", e);
       // 다른 앱에 가 있는 동안 끊긴 거면, 돌아왔을 때 다시
       if ((document.visibilityState !== "visible" || /network|fetch|abort|offline/i.test(String(e?.message || e))) && !n._retried) {
         n._retried = true; jobs.queue.unshift(n); jobs.current = null; saveJobs(); continue;

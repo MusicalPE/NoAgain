@@ -208,6 +208,7 @@ body.list-mode .year-tabs{display:flex}
 .diag{padding-left:22px;margin:8px 0}
 .diag li{padding:4px 0;border-bottom:1px dashed #e3ddcf}
 .diag .ok{color:var(--green)} .diag .no{color:var(--red)}
+.err-line{margin:4px 0;padding:4px 8px;background:#fff;border-left:3px solid var(--red);word-break:break-all;font-family:monospace;font-size:12px}
 
 /* 함께 쓰기 */
 .people{margin:4px 0 10px;padding-left:20px}

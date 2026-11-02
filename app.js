@@ -452,7 +452,7 @@ function noteCard(n) {
       ${n.type ? `<span class="tag">${esc(n.type)}</span>` : ""}
       ${n.source === "ai" ? `<span class="tag ai">비슷한 문제</span>` : ""}
       ${n.aiJudged && n.myAnswer ? `<span class="tag ai">AI가 채점</span>` : ""}
-      ${n.status === "mastered" ? `<span class="tag ok">익힘</span>` : `<span class="tag wrong">${n.wrongCount ? `틀림 ${n.wrongCount}번` : "연습할 문제"}</span>`}
+      ${n.status === "mastered" ? `<span class="tag ok">익힘</span>` : isFrequent(n) ? `<span class="tag freq">자주 틀림 ${n.wrongCount}번</span>` : `<span class="tag wrong">${n.wrongCount ? `틀림 ${n.wrongCount}번` : "연습할 문제"}</span>`}
       <span class="muted small" style="margin-left:auto">${(state.nb.members || []).length > 1 && n.addedByName ? esc(n.addedByName) + " · " : ""}${fmtDate(n.createdAt)}</span>
     </div>
     <div class="q">${rich(n.question)}</div>
@@ -505,7 +505,8 @@ function renderStats() {
   // 칸을 누르면 그 문제들만 보기 (아직 틀림 / 익힘 / 모두)
   const st = $("#fStatus").value;
   const box = (key, cls, num, label) => `<button type="button" class="stat ${cls} ${st === key ? "on" : ""}" data-st="${key}"><b>${num}</b>${label}</button>`;
-  $("#stats").innerHTML = box("all", "", pool.length, "전체") + box("wrong", "red", wrong, "아직 틀림") + box("mastered", "green", done, "익힘");
+  const freq = pool.filter(isFrequent).length;
+  $("#stats").innerHTML = box("all", "", pool.length, "전체") + box("wrong", "red", wrong, "아직 틀림") + box("frequent", "freq", freq, "자주 틀림") + box("mastered", "green", done, "익힘");
   // 오른쪽 과목 색 띠지
   const subs = SUBJECTS.filter((s) => pool.some((n) => n.subject === s));
   if (listSubject !== "all" && !subs.includes(listSubject)) listSubject = "all";
@@ -515,12 +516,15 @@ function renderStats() {
     `<button class="itab all ${listSubject === "all" ? "on" : ""}" data-sub="all">전체${num(wrong)}</button>` +
     subs.map((s) => `<button class="itab ${listSubject === s ? "on" : ""}" data-sub="${esc(s)}" style="background:${subjColor(s)}">${esc(s)}${num(bySub[s])}</button>`).join("");
 }
+// 자주 틀림: 다시 풀었는데도 또 틀려서 틀린 횟수가 2번 이상이고 아직 못 익힌 문제
+const FREQ = 2;
+const isFrequent = (n) => (n.wrongCount || 0) >= FREQ && n.status !== "mastered";
 function filtered({ subject, status, similar, search = "", year = "all" }) {
   const q = search.trim().toLowerCase();
   return state.notes.filter((n) =>
     inYear(n, year) &&
     (subject === "all" || n.subject === subject) &&
-    (status === "all" || (status === "mastered" ? n.status === "mastered" : n.status !== "mastered")) &&
+    (status === "all" || (status === "mastered" ? n.status === "mastered" : status === "frequent" ? isFrequent(n) : n.status !== "mastered")) &&
     (similar || n.source !== "ai") &&
     (!q || [n.question, n.unit, n.type].join(" ").toLowerCase().includes(q)));
 }
@@ -537,7 +541,7 @@ function renderList() {
     const extra = state.notes.filter((n) => state.keepShown.has(n.id) && !list.includes(n));
     if (extra.length) list = state.notes.filter((n) => list.includes(n) || extra.includes(n));
   }
-  const st = { wrong: "아직 틀린", mastered: "익힌", all: "모은" }[$("#fStatus").value];
+  const st = { wrong: "아직 틀린", mastered: "익힌", all: "모은", frequent: "자주 틀린" }[$("#fStatus").value];
   const yName = listYear === "all" ? "" : `${listYear}학년도 · `;
   $("#secTitle").innerHTML = state.notes.length ? `<span class="sec-mark" style="background:${listSubject === "all" ? "var(--ink)" : subjColor(listSubject)}"></span>${yName}${listSubject === "all" ? "전체" : esc(listSubject)} · ${st} ${list.length}문제` : "";
   const box = $("#noteList");
@@ -579,7 +583,8 @@ $("#noteList").addEventListener("click", async (e) => {
     if (a.error) { toast(a.error); return; }
     const ok = judgeAnswer(n, a);
     try { await patchNote(id, { ...solvedData(n, ok, a.given), myAnswer: a.given }); } catch (e) { toast("기록하지 못했어요: " + (e.code || e.message)); return; }
-    toast(ok ? "맞았어요! 익힌 문제로 옮겼어요" : "아쉬워요. 정답과 풀이를 확인해 봐요", 3500);
+    const nowFreq = !ok && (n.wrongCount || 0) >= FREQ;
+    toast(ok ? "맞았어요! 익힌 문제로 옮겼어요" : nowFreq ? "또 틀렸어요. \"자주 틀림\"에 모아 둘게요" : "아쉬워요. 정답과 풀이를 확인해 봐요", 3500);
     state.keepShown.add(id);
     renderList();
     const again = document.querySelector(`.note[data-id="${id}"] details.exp`); if (again && !ok) again.open = true;
@@ -1233,7 +1238,7 @@ async function notifyDone(text) {
 
 // ───────── 다시 풀기 ─────────
 function retryPool() {
-  return filtered({ subject: $("#rSubject").value || "all", status: $("#rMastered").checked ? "all" : "wrong", similar: $("#rSimilar").checked, year: $("#rYear").value || "all" });
+  return filtered({ subject: $("#rSubject").value || "all", status: $("#rFreq").checked ? "frequent" : $("#rMastered").checked ? "all" : "wrong", similar: $("#rSimilar").checked, year: $("#rYear").value || "all" });
 }
 function updateRetryAvail() {
   fillYearSelect($("#rYear"));
@@ -1241,7 +1246,7 @@ function updateRetryAvail() {
   $("#rSubject").value = [...$("#rSubject").options].some((o) => o.value === cur) ? cur : "all";
   $("#rAvail").textContent = `풀 수 있는 문제: ${retryPool().length}개`;
 }
-["#rYear", "#rSubject", "#rSimilar", "#rMastered"].forEach((s) => ($(s).onchange = updateRetryAvail));
+["#rYear", "#rSubject", "#rSimilar", "#rMastered", "#rFreq"].forEach((s) => ($(s).onchange = updateRetryAvail));
 
 $("#btnStartRetry").onclick = () => {
   const pool = retryPool();
@@ -1312,6 +1317,7 @@ async function finishOne(n, ok) {
   if (ok) r.right++;
   const data = solvedData(n, ok);
   try { await patchNote(n.id, data); } catch (e) { toast("기록하지 못했어요: " + (e.code || e.message)); }
+  if (!ok && (data.wrongCount || 0) === FREQ) toast("또 틀린 문제는 \"자주 틀림\"에 모아 둘게요", 3000);
   r.i++; renderRetry();
 }
 

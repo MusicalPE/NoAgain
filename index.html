@@ -62,6 +62,7 @@
       <select id="fStatus" hidden>
         <option value="wrong">아직 틀린 문제</option>
         <option value="mastered">익힌 문제</option>
+        <option value="frequent">자주 틀린 문제</option>
         <option value="all">전체</option>
       </select>
       <label class="chk"><input type="checkbox" id="fSimilar" checked> 비슷한 문제도</label>
@@ -114,8 +115,9 @@
         </select></label>
       </div>
       <label class="chk"><input type="checkbox" id="rSimilar" checked> 비슷한 문제도 섞기</label>
+      <label class="chk"><input type="checkbox" id="rFreq"> 자주 틀린 문제만</label>
       <label class="chk"><input type="checkbox" id="rMastered"> 익힌 문제도 넣기</label>
-      <p class="muted small">맞히면 "익힘"으로 옮겨져요. 틀리면 틀린 횟수가 올라가요.</p>
+      <p class="muted small">맞히면 "익힘"으로 옮겨져요. 다시 풀었는데 또 틀리면 "자주 틀림"에 모여요.</p>
       <p id="rAvail" class="muted"></p>
       <button class="btn primary big" id="btnStartRetry">시작하기</button>
     </div>
@@ -132,6 +134,7 @@
         <label>과목 <select id="pSubject"></select></label>
         <label>어떤 문제 <select id="pStatus">
           <option value="wrong">아직 틀린 문제</option>
+          <option value="frequent">자주 틀린 문제</option>
           <option value="all">전체</option>
           <option value="mastered">익힌 문제</option>
         </select></label>

@@ -6,6 +6,7 @@ import { getAuth, GoogleAuthProvider, signInWithPopup, signInWithRedirect, onAut
   from "https://www.gstatic.com/firebasejs/12.18.0/firebase-auth.js";
 import { getFirestore, collection, doc, addDoc, updateDoc, deleteDoc, getDocs, getDoc, setDoc, query, orderBy, where, arrayUnion, arrayRemove, writeBatch }
   from "https://www.gstatic.com/firebasejs/12.18.0/firebase-firestore.js";
+import { drawFigure } from "./figure.js";
 import { getAI, getGenerativeModel, GoogleAIBackend } from "https://www.gstatic.com/firebasejs/12.18.0/firebase-ai.js";
 
 // ───────── 작은 도구 ─────────
@@ -496,7 +497,7 @@ function openEdit(n) {
   $("#mCancel").onclick = closeModal;
   $("#mSave").onclick = async () => {
     const data = readForm(root);
-    if ($("#mDropFig")?.checked) data.figure = "";
+    if ($("#mDropFig")?.checked) { data.figure = ""; data.figureSpec = null; }
     try { await patchNote(n.id, data); closeModal(); renderList(); toast("저장했어요"); }
     catch (e) { toast("저장하지 못했어요: " + (e.code || e.message)); }
   };
@@ -810,7 +811,22 @@ async function makeSimilar(n, count) {
 규칙
 - 같은 개념, 같은 풀이 방법을 쓰는 문제로 만들되 숫자·상황·낱말은 바꾼다. 원래 문제를 그대로 베끼지 않는다.
 - 학생이 틀린 이유(${n.wrongReason || "모름"})를 다시 연습할 수 있게 만든다.
-- 그림이 꼭 있어야 풀 수 있는 문제는 만들지 않는다. 필요한 정보는 글이나 수치로 설명한다.
+- 원래 문제에 그림이 있었으면 새 문제에도 그림을 넣는다. 그림은 직접 그리지 말고 아래 "그림 설계도" 중 하나로 figure 에 적는다.
+  그러면 앱이 자로 잰 듯 정확하게 그려 준다. 그림으로 보여 줄 정보(예: 화살표가 가리키는 곳)는 문제 글에 다시 쓰지 않는다.
+  그림이 필요 없거나, 아래 설계도로 나타낼 수 없는 그림이면 figure 는 null 로 두고 필요한 정보를 글로 설명한다.
+- 그림을 넣었으면 그림을 보고 다시 풀어서 정답과 그림이 꼭 맞는지 확인한다.
+
+그림 설계도 (숫자는 실제 값으로)
+ 수직선: {"type":"numberline","from":"5","to":"6","parts":6,"arrows":[3],"labels":{"2":"□"}}
+   from/to = 양 끝 눈금 글자, parts = 작은 칸 수, arrows = 화살표가 가리키는 눈금 번호(왼쪽 끝이 0), labels = 눈금 번호별 글자(대분수는 "5 2/6")
+   points 를 쓰면 점을 찍을 수 있다: "points":[{"at":2,"text":"ㄱ"}]
+ 띠 분수 모형: {"type":"fractionbar","bars":[{"parts":5,"shaded":2,"label":"가"}]}
+ 원 분수 모형: {"type":"fractioncircle","circles":[{"parts":8,"shaded":3}]}
+ 시계: {"type":"clock","hour":3,"minute":40}
+ 도형: {"type":"polygon","points":[[0,0],[6,0],[6,4],[0,4]],"sides":["6cm","4cm","",""],"vertices":["ㄱ","ㄴ","ㄷ","ㄹ"],"angles":[{"at":0,"text":"60°"}]}
+   points 는 실제 길이 비율대로(y는 아래로 갈수록 커짐), sides[i] 는 i번 점과 다음 점 사이 변의 길이 글자
+ 모눈 위 도형: {"type":"grid","cols":10,"rows":6,"shapes":[[[1,1],[5,1],[5,4]]]}
+ 표: {"type":"table","rows":[["요일","월","화"],["시간(분)","30","45"]]}
 - 원래 문제가 객관식이면 보기 4~5개짜리 객관식으로, 아니면 주관식으로 만든다. 보기는 choices 배열에 번호 없이 넣고, 정답은 "②"처럼 번호로 쓴다.
 - 만든 뒤 직접 풀어 보고 정답이 하나로 딱 정해지는지 확인한다. 애매하면 문제를 고친다.
 - 수식은 LaTeX 로 쓰고 $...$ 로 감싼다.
@@ -821,16 +837,19 @@ async function makeSimilar(n, count) {
 문제: ${n.question}
 보기: ${(n.choices || []).join(" | ") || "없음"}
 정답: ${n.correctAnswer}
-${n.figure ? "(원래 문제에는 함께 보낸 그림이 있다)" : ""}
+${n.figureSpec ? "원래 문제의 그림 설계도: " + JSON.stringify(n.figureSpec) : n.figure ? "(원래 문제에는 함께 보낸 그림이 있다)" : ""}
 
 아래 JSON 하나만 출력한다.
-{"problems":[{"question":"","choices":[],"correctAnswer":"","explanation":""}]}`;
+{"problems":[{"question":"","figure":null,"choices":[],"correctAnswer":"","explanation":""}]}`;
   const parts = [prompt];
-  if (n.figure) parts.push({ inlineData: { data: n.figure.split(",")[1], mimeType: "image/jpeg" } });
+  if (n.figure && /^data:image\/jpeg;base64,/.test(n.figure)) parts.push({ inlineData: { data: n.figure.split(",")[1], mimeType: "image/jpeg" } });
   const out = await askAI(parts, 0.7);
   const probs = (Array.isArray(out.problems) ? out.problems : []).filter((p) => p && p.question).slice(0, count);
   for (const p of probs) {
+    const spec = p.figure && typeof p.figure === "object" ? p.figure : null;
+    const pic = spec ? drawFigure(spec) : "";
     await addNote({
+      figure: pic, figureSpec: pic ? spec : null,
       subject: n.subject, unit: n.unit, type: n.type, question: String(p.question),
       choices: Array.isArray(p.choices) ? p.choices.map(String) : [], correctAnswer: String(p.correctAnswer ?? ""),
       answerFromAI: true, explanation: String(p.explanation ?? ""), source: "ai", parentId: n.id, wrongCount: 0, status: "wrong"

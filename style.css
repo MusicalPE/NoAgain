@@ -190,6 +190,16 @@ body.list-mode .year-tabs{display:flex}
 .ytab .yy{font-size:17px;text-combine-upright:all;padding-inline-end:3px}
 .ytab.on{width:42px;background:var(--ink);border-color:var(--ink);color:#fff;opacity:1;box-shadow:2px 3px 0 rgba(0,0,0,.18)}
 
+/* 다시 그린 그림 / 원래 사진 고르기 */
+.fig-pick{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin:8px 0}
+.fig-pick label{display:block;border:2px solid #e6e0d2;border-radius:6px;padding:6px;font-size:15px;cursor:pointer;background:#fff}
+.fig-pick label.on{border-color:var(--ink)}
+.fig-pick .fig{margin:6px 0 0;max-height:160px;transform:none}
+.fig-pick p{grid-column:1/-1;margin:0}
+details.orig{margin:-4px 0 6px;font-size:14px}
+details.orig summary{cursor:pointer;color:var(--blue)}
+@media(max-width:420px){.fig-pick{grid-template-columns:1fr}}
+
 /* 답 쓰는 칸 */
 .practice{margin-top:10px;padding:10px 12px;background:#fff;border:1.5px dashed #d8d2c4;border-radius:8px}
 .ans-box .choice-btns{margin-top:4px}

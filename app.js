@@ -457,6 +457,7 @@ function noteCard(n) {
     </div>
     <div class="q">${rich(n.question)}</div>
     ${n.figure ? `<img class="fig" src="${n.figure}" alt="문제 그림">` : ""}
+    ${n.figurePhoto ? `<details class="orig"><summary>원래 사진 보기</summary><img class="fig" src="${n.figurePhoto}" alt="원래 사진"></details>` : ""}
     ${practice ? `<div class="practice">${answerBoxHTML(n)}
       <div class="row" style="margin-top:8px"><button class="btn red" data-act="check">답 확인</button><span class="muted small">답을 써야 정답과 풀이가 보여요</span></div></div>` : `${choicesHTML(n.choices)}
     <div class="ans">
@@ -784,6 +785,19 @@ $("#btnRotL").onclick = () => { if (!state.photo) return; state.photo.canvas = r
 $("#btnRotR").onclick = () => { if (!state.photo) return; state.photo.canvas = rotateCanvas(state.photo.canvas, 90); showPhoto(); };
 $("#btnClearPhoto").onclick = () => { state.photo = null; state.recog = []; $("#photoPreview").classList.add("hidden"); $("#recogResult").innerHTML = ""; };
 
+// 그림 설계도 안내 (사진 읽기·비슷한 문제·다시 풀기에서 함께 씀)
+const FIGURE_GUIDE = `그림 설계도 (숫자는 실제 값으로)
+ 수직선: {"type":"numberline","from":"5","to":"6","parts":6,"arrows":[3],"labels":{"2":"□"}}
+   from/to = 양 끝 눈금 글자, parts = 작은 칸 수, arrows = 화살표가 가리키는 눈금 번호(왼쪽 끝이 0), labels = 눈금 번호별 글자(대분수는 "5 2/6")
+   points 를 쓰면 점을 찍을 수 있다: "points":[{"at":2,"text":"ㄱ"}]
+ 띠 분수 모형: {"type":"fractionbar","bars":[{"parts":5,"shaded":2,"label":"가"}]}
+ 원 분수 모형: {"type":"fractioncircle","circles":[{"parts":8,"shaded":3}]}
+ 시계: {"type":"clock","hour":3,"minute":40}
+ 도형: {"type":"polygon","points":[[0,0],[6,0],[6,4],[0,4]],"sides":["6cm","4cm","",""],"vertices":["ㄱ","ㄴ","ㄷ","ㄹ"],"angles":[{"at":0,"text":"60°"}]}
+   points 는 실제 길이 비율대로(y는 아래로 갈수록 커짐), sides[i] 는 i번 점과 다음 점 사이 변의 길이 글자
+ 모눈 위 도형: {"type":"grid","cols":10,"rows":6,"shapes":[[[1,1],[5,1],[5,4]]]}
+ 표: {"type":"table","rows":[["요일","월","화"],["시간(분)","30","45"]]}`;
+
 function recognizePrompt() {
   return `너는 학생의 오답노트를 정리해 주는 친절한 선생님이다. 사진은 학생이 푼 시험지·문제집·학습지다.
 학생 학년: ${grade() || "모름(사진을 보고 짐작)"}
@@ -804,6 +818,9 @@ function recognizePrompt() {
 5. 수식은 LaTeX 로 쓰고 $...$ 로 감싼다(예: $\\frac{3}{4}+\\frac{1}{8}$). 수식이 아닌 글은 그대로 쓴다.
 6. 보기(①②③…)는 question 에 넣지 말고 choices 배열에 앞 번호 없이 넣는다. 정답이 보기 중 하나면 correctAnswer 는 "③" 처럼 번호로 쓴다.
 7. 문제에 그림·도형·그래프·표·지도처럼 글로 옮기기 어려운 부분이 있으면 hasFigure 를 true 로 하고, 그 부분이 사진 어디에 있는지 figureBox 에 [ymin, xmin, ymax, xmax] (사진 전체를 0~1000 으로 본 비율)로 적는다. 글로 옮길 수 있는 짧은 표는 question 안에 글로 적는다.
+   그 그림이 아래 "그림 설계도"로 나타낼 수 있는 그림이면 인쇄된 그림만 보고(손글씨·낙서는 빼고) 설계도를 figure 에 적는다. 앱이 이 설계도로 깨끗하게 다시 그린다.
+   눈금 수·칸 수·화살표 위치·색칠한 칸 수를 하나하나 세어서 원래 그림과 똑같게 만든다. 나타낼 수 없으면 figure 는 null.
+${FIGURE_GUIDE}
 8. wrongReason 은 학생 답을 보고 왜 틀렸을지 학생 눈높이로 한두 문장, explanation 은 학생 눈높이의 단계별 풀이로 쓴다.
    explanation 에는 다 확인한 최종 풀이만 쓴다. "아, 다시 보니", "만약 ~였다면" 처럼 고쳐 생각한 흔적은 쓰지 않는다. 풀이 끝의 답과 correctAnswer 가 꼭 같아야 한다.
 9. subject 는 다음 중 하나: ${SUBJECTS.join(", ")}
@@ -811,7 +828,7 @@ function recognizePrompt() {
 아래 JSON 하나만 출력한다.
 항목은 적힌 순서대로 쓴다. explanation(풀이)을 먼저 끝까지 쓰고, 그 풀이의 마지막 답을 글자 그대로 correctAnswer 에 옮긴다.
 그다음 학생 답(myAnswer)과 correctAnswer 를 비교해 isWrong 을 정하고, 틀렸으면 wrongReason 을 쓴다.
-{"rotate":0,"problems":[{"number":"문제 번호","subject":"과목","unit":"단원(짐작)","type":"문제 유형(짧게)","question":"문제 글","choices":[],"hasFigure":false,"figureBox":[],"myAnswer":"학생이 쓴 답, 없으면 빈 문자열","graded":true,"explanation":"단계별 풀이","correctAnswer":"풀이 마지막 답","answerFromAI":false,"isWrong":true,"wrongReason":""}]}`;
+{"rotate":0,"problems":[{"number":"문제 번호","subject":"과목","unit":"단원(짐작)","type":"문제 유형(짧게)","question":"문제 글","choices":[],"hasFigure":false,"figureBox":[],"figure":null,"myAnswer":"학생이 쓴 답, 없으면 빈 문자열","graded":true,"explanation":"단계별 풀이","correctAnswer":"풀이 마지막 답","answerFromAI":false,"isWrong":true,"wrongReason":""}]}`;
 }
 
 async function readPhotoOnce() {
@@ -858,7 +875,7 @@ $("#btnRecognize").onclick = async () => {
       ...p,
       subject: SUBJECTS.includes(p.subject) ? p.subject : "기타",
       choices: Array.isArray(p.choices) ? p.choices.map(String) : [],
-      figure: p.hasFigure ? cropToDataURL(state.photo.canvas, p.figureBox) : "",
+      ...pickFigure(p),
       keep: p.isWrong !== false
     }));
     found = probs.length;
@@ -881,7 +898,7 @@ function renderRecog() {
   if (!state.recog.length) { box.innerHTML = ""; return; }
   const how = state.lastAI ? ` <span class="small">(${state.lastAI.sec}초 · ${esc(state.lastAI.model.replace("gemini-", ""))})</span>` : "";
   box.innerHTML = `<p class="muted">문제 ${state.recog.length}개를 찾았어요${how}. 틀린 문제에는 미리 체크해 두었어요. 내용을 확인하고 고칠 곳은 고쳐 주세요.</p>` +
-    state.recog.map((p, i) => `<div class="card recog ${p.keep ? "" : "notwrong"}" data-i="${i}">
+    state.recog.map((p, i) => (p._i = i, `<div class="card recog ${p.keep ? "" : "notwrong"}" data-i="${i}">
       <div class="note-head">
         <label class="chk" style="margin:0"><input type="checkbox" data-keep ${p.keep ? "checked" : ""}> <b>${esc(p.number || i + 1)}번 저장</b></label>
         ${p.isWrong === false ? `<span class="tag ok">맞은 문제</span>` : `<span class="tag wrong">틀린 문제</span>`}
@@ -895,7 +912,7 @@ function renderRecog() {
         ${p.figure ? `<button class="btn sm ghost" data-nofig>그림 빼기</button>` : ""}
         <button class="btn sm" data-resolve>AI 다시 풀기</button>
       </div>
-    </div>`).join("") +
+    </div>`)).join("") +
     `<div class="save-bar">
       <label class="chk"><input type="checkbox" id="optSimilar" checked> 저장하면서 문제마다 비슷한 문제 ${SIMILAR_COUNT}개씩 만들기</label>
       <button class="btn red big" id="btnSaveRecog">체크한 문제 저장</button>
@@ -903,7 +920,20 @@ function renderRecog() {
   box.querySelectorAll(".recog").forEach((card) => wirePreview(card.querySelector(".edit")));
   typeset(box);
 }
-const figBlock = (p) => (p.figure ? `<img class="fig" src="${p.figure}" alt="잘라 낸 그림">` : "");
+// 사진에서 읽은 그림: 원래 사진 조각 + (그릴 수 있으면) 깨끗하게 다시 그린 그림
+function pickFigure(p) {
+  const photo = p.hasFigure ? cropToDataURL(state.photo.canvas, p.figureBox) : "";
+  const spec = p.figure && typeof p.figure === "object" && !Array.isArray(p.figure) ? p.figure : null;
+  const drawn = spec ? drawFigure(spec) : "";
+  return { figurePhoto: photo, figureDrawn: drawn, figureSpecJson: drawn ? JSON.stringify(spec) : "", useDrawn: !!drawn, figure: drawn || photo };
+}
+function figBlock(p) {
+  if (p.figureDrawn && p.figurePhoto) return `<div class="fig-pick">
+      <label class="${p.useDrawn ? "on" : ""}"><input type="radio" name="fp${p._i}" data-usefig="1" ${p.useDrawn ? "checked" : ""}> 다시 그린 그림<img class="fig" src="${p.figureDrawn}"></label>
+      <label class="${p.useDrawn ? "" : "on"}"><input type="radio" name="fp${p._i}" data-usefig="0" ${p.useDrawn ? "" : "checked"}> 원래 사진<img class="fig" src="${p.figurePhoto}"></label>
+      <p class="muted small">다시 그린 그림이 원래 사진과 같은지 확인하고 쓸 그림을 골라 주세요.</p></div>`;
+  return p.figure ? `<img class="fig" src="${p.figure}" alt="문제 그림">` : "";
+}
 
 $("#recogResult").addEventListener("change", (e) => {
   if (e.target.matches("[data-keep]")) {
@@ -915,12 +945,14 @@ $("#recogResult").addEventListener("click", async (e) => {
   const card = e.target.closest(".recog");
   if (card) {
     const i = +card.dataset.i, p = state.recog[i];
-    if (e.target.matches("[data-nofig]")) { syncRecog(); p.figure = ""; renderRecog(); return; }
+    if (e.target.matches("[data-nofig]")) { syncRecog(); Object.assign(p, { figure: "", figurePhoto: "", figureDrawn: "", figureSpecJson: "" }); renderRecog(); return; }
+    if (e.target.matches("[data-usefig]")) { syncRecog(); p.useDrawn = e.target.dataset.usefig === "1"; p.figure = p.useDrawn ? p.figureDrawn : p.figurePhoto; renderRecog(); return; }
     if (e.target.matches("[data-resolve]")) {
       syncRecog();
       const r = await withResolveBusy(() => solveAgain(p));
       if (r) {
         Object.assign(p, { correctAnswer: r.ans, explanation: r.explanation, wrongReason: r.wrongReason, answerFromAI: true });
+        if (r.drawn && p.figurePhoto && !p.figureDrawn) Object.assign(p, { figureDrawn: r.drawn, figureSpecJson: r.specJson, useDrawn: true, figure: r.drawn });
         if (p.myAnswer) { p.isWrong = !r.okKid; p.keep = !r.okKid || p.keep; }
         renderRecog(); toast(r.msg, 4500);
       }
@@ -929,7 +961,7 @@ $("#recogResult").addEventListener("click", async (e) => {
     if (e.target.matches("[data-crop]")) {
       syncRecog();
       const box = await cropEditor(state.photo.canvas, p.figureBox);
-      if (box) { p.figureBox = box; p.figure = cropToDataURL(state.photo.canvas, box); renderRecog(); }
+      if (box) { p.figureBox = box; p.figurePhoto = cropToDataURL(state.photo.canvas, box); if (!p.useDrawn || !p.figureDrawn) p.figure = p.figurePhoto; renderRecog(); }
       return;
     }
   }
@@ -953,7 +985,7 @@ async function saveRecog() {
       const note = await addNote({
         subject: p.subject, unit: p.unit || "", type: p.type || "", question: p.question, choices: p.choices || [],
         myAnswer: p.myAnswer || "", correctAnswer: p.correctAnswer || "", answerFromAI: !!p.answerFromAI,
-        wrongReason: p.wrongReason || "", explanation: p.explanation || "", figure: p.figure || "", source: "photo", aiJudged: p.graded === false,
+        wrongReason: p.wrongReason || "", explanation: p.explanation || "", figure: p.figure || "", figurePhoto: p.figurePhoto && p.figure !== p.figurePhoto ? p.figurePhoto : "", figureSpec: p.useDrawn && p.figureDrawn ? p.figureSpecJson : "", source: "photo", aiJudged: p.graded === false,
         status: p.isWrong === false ? "mastered" : "wrong", wrongCount: p.isWrong === false ? 0 : 1
       });
       saved++; savedNotes.push(note);
@@ -990,6 +1022,8 @@ function cropEditor(canvas, initBox) {
 
 // ───────── 비슷한 문제 만들기 ─────────
 // 정답·풀이가 이상할 때: 더 꼼꼼한 모델이 시간을 들여 다시 풀기
+// 문제의 원래 사진 조각 (없으면 빈 글자)
+const photoOf = (n) => n.figurePhoto || (/^data:image\/jpeg;base64,/.test(n.figure || "") ? n.figure : "");
 async function solveAgain(n) {
   const prompt = `너는 초등학교 선생님이다. 아래 문제를 처음부터 아주 꼼꼼히 다시 푼다. 앞서 누가 쓴 답은 틀렸을 수 있으니 믿지 않는다.
 학생 학년: ${grade() || "모름"}
@@ -1006,21 +1040,25 @@ ${n.figureSpec ? "그림 설계도: " + (typeof n.figureSpec === "string" ? n.fi
 아래 JSON 하나만 출력한다.
 항목은 적힌 순서대로 쓴다. explanation(풀이)을 먼저 끝까지 쓰고, 그 풀이의 마지막 답을 글자 그대로 correctAnswer 에 옮긴다.
 그다음 학생 답과 correctAnswer 를 비교해 studentCorrect 를 정한다.
-{"explanation":"단계별 풀이","correctAnswer":"풀이 마지막 답","studentCorrect":false,"wrongReason":""}`;
+${photoOf(n) && !n.figureSpec ? "함께 보낸 그림 사진이 아래 설계도로 나타낼 수 있는 그림이면, 인쇄된 그림만 보고 눈금·칸·화살표를 하나하나 세어 figure 에 설계도를 적는다(아니면 null).\n" + FIGURE_GUIDE : ""}
+{"figure":null,"explanation":"단계별 풀이","correctAnswer":"풀이 마지막 답","studentCorrect":false,"wrongReason":""}`;
   const parts = [prompt];
-  if (n.figure && /^data:image\/jpeg;base64,/.test(n.figure)) parts.push({ inlineData: { data: n.figure.split(",")[1], mimeType: "image/jpeg" } });
+  const photo = photoOf(n); if (photo) parts.push({ inlineData: { data: photo.split(",")[1], mimeType: "image/jpeg" } });
   const out = await askAI(parts, 0.1, null, AI_MODELS, { think: 8192, timeout: 120000 });
   if (!out || !out.correctAnswer) throw new Error("AI가 답을 돌려주지 않았어요");
   const ans = fixMath(String(out.correctAnswer));
   const okKid = !!n.myAnswer && (out.studentCorrect === true || judgeAnswer({ correctAnswer: ans }, { cands: [n.myAnswer] }));
   const changed = normAnswer(ans) !== normAnswer(n.correctAnswer);
   const msg = (changed ? `정답을 ${ans.replace(/\$/g, "")}(으)로 고쳤어요` : "정답은 그대로예요. 풀이를 새로 썼어요") + (n.myAnswer ? (okKid ? ". 아이 답이 맞아요" : ". 아이 답은 다시 봐야 해요") : "");
-  return { ans, okKid, msg, explanation: String(out.explanation || ""), wrongReason: okKid ? "" : String(out.wrongReason || n.wrongReason || "") };
+  const spec = out.figure && typeof out.figure === "object" && !Array.isArray(out.figure) ? out.figure : null;
+  const drawn = spec ? drawFigure(spec) : "";
+  return { ans, okKid, msg: msg + (drawn ? ". 그림도 깨끗하게 다시 그렸어요" : ""), drawn, specJson: drawn ? JSON.stringify(spec) : "", explanation: String(out.explanation || ""), wrongReason: okKid ? "" : String(out.wrongReason || n.wrongReason || "") };
 }
 async function resolveNote(n) {
-  const { ans, okKid, msg, explanation, wrongReason } = await solveAgain(n);
+  const { ans, okKid, msg, explanation, wrongReason, drawn, specJson } = await solveAgain(n);
+  const pic = drawn && photoOf(n) ? { figure: drawn, figurePhoto: photoOf(n), figureSpec: specJson } : {};
   await patchNote(n.id, {
-    correctAnswer: ans, explanation, answerFromAI: true, wrongReason, myAnswerOk: okKid
+    correctAnswer: ans, explanation, answerFromAI: true, wrongReason, myAnswerOk: okKid, ...pic
   });
   return msg;
 }
@@ -1045,17 +1083,7 @@ async function makeSimilar(n, count) {
   그림이 필요 없거나, 아래 설계도로 나타낼 수 없는 그림이면 figure 는 null 로 두고 필요한 정보를 글로 설명한다.
 - 그림을 넣었으면 그림을 보고 다시 풀어서 정답과 그림이 꼭 맞는지 확인한다.
 
-그림 설계도 (숫자는 실제 값으로)
- 수직선: {"type":"numberline","from":"5","to":"6","parts":6,"arrows":[3],"labels":{"2":"□"}}
-   from/to = 양 끝 눈금 글자, parts = 작은 칸 수, arrows = 화살표가 가리키는 눈금 번호(왼쪽 끝이 0), labels = 눈금 번호별 글자(대분수는 "5 2/6")
-   points 를 쓰면 점을 찍을 수 있다: "points":[{"at":2,"text":"ㄱ"}]
- 띠 분수 모형: {"type":"fractionbar","bars":[{"parts":5,"shaded":2,"label":"가"}]}
- 원 분수 모형: {"type":"fractioncircle","circles":[{"parts":8,"shaded":3}]}
- 시계: {"type":"clock","hour":3,"minute":40}
- 도형: {"type":"polygon","points":[[0,0],[6,0],[6,4],[0,4]],"sides":["6cm","4cm","",""],"vertices":["ㄱ","ㄴ","ㄷ","ㄹ"],"angles":[{"at":0,"text":"60°"}]}
-   points 는 실제 길이 비율대로(y는 아래로 갈수록 커짐), sides[i] 는 i번 점과 다음 점 사이 변의 길이 글자
- 모눈 위 도형: {"type":"grid","cols":10,"rows":6,"shapes":[[[1,1],[5,1],[5,4]]]}
- 표: {"type":"table","rows":[["요일","월","화"],["시간(분)","30","45"]]}
+${FIGURE_GUIDE}
 - 원래 문제가 객관식이면 보기 4~5개짜리 객관식으로, 아니면 주관식으로 만든다. 보기는 choices 배열에 번호 없이 넣고, 정답은 "②"처럼 번호로 쓴다.
 - 만든 뒤 직접 풀어 보고 정답이 하나로 딱 정해지는지 확인한다. 애매하면 문제를 고친다.
 - 정답은 초등 교과서 표기로 쓴다. 분자가 0이면 분수로 쓰지 않는다(2와 5분의 0 → 2). 대분수의 분수 부분은 진분수로 쓴다.
@@ -1074,7 +1102,7 @@ ${n.figureSpec ? "원래 문제의 그림 설계도: " + (typeof n.figureSpec ==
 항목은 적힌 순서대로 쓴다. explanation(풀이)을 먼저 끝까지 쓰고, 그 풀이의 마지막 답을 글자 그대로 correctAnswer 에 옮긴다.
 {"problems":[{"question":"","figure":null,"choices":[],"explanation":"단계별 풀이","correctAnswer":"풀이 마지막 답"}]}`;
   const parts = [prompt];
-  if (n.figure && /^data:image\/jpeg;base64,/.test(n.figure)) parts.push({ inlineData: { data: n.figure.split(",")[1], mimeType: "image/jpeg" } });
+  const photo = photoOf(n); if (photo) parts.push({ inlineData: { data: photo.split(",")[1], mimeType: "image/jpeg" } });
   const out = await askAI(parts, 0.7, null, AI_MODELS, { think: 4096, timeout: 90000 });
   // 답 모양이 조금 달라도 받아 주기: {problems:[…]} / […] / {problem:{…}} / {question:…}
   const list = Array.isArray(out) ? out : Array.isArray(out?.problems) ? out.problems : out?.problem ? [out.problem] : out?.question ? [out] : [];

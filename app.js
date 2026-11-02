@@ -519,6 +519,14 @@ function renderStats() {
 // 자주 틀림: 다시 풀었는데도 또 틀려서 틀린 횟수가 2번 이상이고 아직 못 익힌 문제
 const FREQ = 2;
 const isFrequent = (n) => (n.wrongCount || 0) >= FREQ && n.status !== "mastered";
+// 자주 틀림에 처음 들어가는 순간, 약한 유형을 더 연습하게 비슷한 문제를 저절로 더 만들기 (문제마다 한 번만)
+function autoSimilarForFrequent(n) {
+  if (!isFrequent(n) || n.autoSimilar) return false;
+  n.autoSimilar = true;
+  patchNote(n.id, { autoSimilar: true }).catch(() => {});
+  enqueueSimilar([n]);
+  return true;
+}
 function filtered({ subject, status, similar, search = "", year = "all" }) {
   const q = search.trim().toLowerCase();
   return state.notes.filter((n) =>
@@ -584,7 +592,8 @@ $("#noteList").addEventListener("click", async (e) => {
     const ok = judgeAnswer(n, a);
     try { await patchNote(id, { ...solvedData(n, ok, a.given), myAnswer: a.given }); } catch (e) { toast("기록하지 못했어요: " + (e.code || e.message)); return; }
     const nowFreq = !ok && (n.wrongCount || 0) >= FREQ;
-    toast(ok ? "맞았어요! 익힌 문제로 옮겼어요" : nowFreq ? "또 틀렸어요. \"자주 틀림\"에 모아 둘게요" : "아쉬워요. 정답과 풀이를 확인해 봐요", 3500);
+    const made = nowFreq && autoSimilarForFrequent(n);
+    toast(ok ? "맞았어요! 익힌 문제로 옮겼어요" : nowFreq ? `또 틀렸어요. "자주 틀림"에 모아 둘게요${made ? ". 연습할 비슷한 문제도 만들고 있어요" : ""}` : "아쉬워요. 정답과 풀이를 확인해 봐요", 4000);
     state.keepShown.add(id);
     renderList();
     const again = document.querySelector(`.note[data-id="${id}"] details.exp`); if (again && !ok) again.open = true;
@@ -1317,7 +1326,10 @@ async function finishOne(n, ok) {
   if (ok) r.right++;
   const data = solvedData(n, ok);
   try { await patchNote(n.id, data); } catch (e) { toast("기록하지 못했어요: " + (e.code || e.message)); }
-  if (!ok && (data.wrongCount || 0) === FREQ) toast("또 틀린 문제는 \"자주 틀림\"에 모아 둘게요", 3000);
+  if (!ok && (data.wrongCount || 0) >= FREQ) {
+    const made = autoSimilarForFrequent(n);
+    if (made || data.wrongCount === FREQ) toast(`또 틀린 문제는 "자주 틀림"에 모아 둘게요${made ? ". 비슷한 문제도 만들고 있어요" : ""}`, 3500);
+  }
   r.i++; renderRetry();
 }
 

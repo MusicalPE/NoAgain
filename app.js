@@ -84,7 +84,11 @@ async function askAI(parts, temperature = 0.2) {
   for (const name of AI_MODELS) {
     try {
       const model = getGenerativeModel(ai, { model: name, generationConfig: { responseMimeType: "application/json", temperature } });
-      const res = await model.generateContent(parts);
+      let timer;
+      const res = await Promise.race([
+        model.generateContent(parts),
+        new Promise((_, no) => { timer = setTimeout(() => no(new Error("timeout: AI 응답이 90초 넘게 없었어요")), 90000); })
+      ]).finally(() => clearTimeout(timer));
       return parseJSON(res.response.text());
     } catch (e) {
       lastErr = e;
@@ -98,6 +102,7 @@ async function askAI(parts, temperature = 0.2) {
 function aiErrorText(e) {
   const m = String(e?.message || e);
   const raw = " (" + m.replace(/^\[[^\]]*\]\s*/, "").replace(/Error fetching from \S+\s*/i, "").replace(/^[:\s]+/, "").slice(0, 110) + ")";
+  if (/^timeout/i.test(m)) return "AI가 너무 오래 걸려서 멈췄어요. 문제 2~3개만 나오게 가까이 찍어 다시 해 보세요";
   if (/app.?check|attestation|recaptcha/i.test(m)) return "App Check 설정을 확인해 주세요" + raw;
   if (QUOTA_RE.test(m)) return "AI 사용량이 잠깐 넘쳤어요. 1~2분 뒤 다시 해 보세요" + raw;
   if (/api.*not.*enabled|\b403\b|permission/i.test(m)) return "AI Logic 이 켜져 있는지 확인해 주세요" + raw;
@@ -115,6 +120,29 @@ function imageToCanvas(img, maxSide) {
   c.getContext("2d").drawImage(img, 0, 0, c.width, c.height);
   return c;
 }
+// 사진을 시계 방향으로 deg(90/180/270)만큼 돌리기
+function rotateCanvas(src, deg) {
+  deg = ((deg % 360) + 360) % 360; if (!deg) return src;
+  const c = document.createElement("canvas");
+  const side = deg === 180;
+  c.width = side ? src.width : src.height; c.height = side ? src.height : src.width;
+  const g = c.getContext("2d");
+  g.translate(c.width / 2, c.height / 2); g.rotate((deg * Math.PI) / 180);
+  g.drawImage(src, -src.width / 2, -src.height / 2);
+  return c;
+}
+// 돌리기 전 사진 기준 네모 [ymin,xmin,ymax,xmax] 를 돌린 뒤 기준으로 바꾸기
+function rotateBox(box, deg) {
+  if (!Array.isArray(box) || box.length !== 4) return box;
+  const [y1, x1, y2, x2] = box.map(Number);
+  deg = ((deg % 360) + 360) % 360;
+  if (deg === 90) return [x1, 1000 - y2, x2, 1000 - y1];
+  if (deg === 180) return [1000 - y2, 1000 - x2, 1000 - y1, 1000 - x1];
+  if (deg === 270) return [1000 - x2, y1, 1000 - x1, y2];
+  return box;
+}
+function showPhoto() { $("#photoImg").src = state.photo.canvas.toDataURL("image/jpeg", 0.85); }
+
 // box: [ymin, xmin, ymax, xmax] 0~1000
 function cropToDataURL(srcCanvas, box, maxSide = 900) {
   if (!box || box.length !== 4) return "";
@@ -531,19 +559,24 @@ async function onPhoto(file) {
   try {
     const img = await loadImage(file);
     state.photo = { canvas: imageToCanvas(img, 2000) };
-    $("#photoImg").src = state.photo.canvas.toDataURL("image/jpeg", 0.85);
+    showPhoto();
     $("#photoPreview").classList.remove("hidden");
     $("#recogResult").innerHTML = ""; state.recog = [];
   } catch (_) { toast("사진을 열지 못했어요"); }
 }
 $("#inCamera").onchange = (e) => { onPhoto(e.target.files[0]); e.target.value = ""; };
 $("#inGallery").onchange = (e) => { onPhoto(e.target.files[0]); e.target.value = ""; };
+$("#btnRotL").onclick = () => { if (!state.photo) return; state.photo.canvas = rotateCanvas(state.photo.canvas, 270); showPhoto(); };
+$("#btnRotR").onclick = () => { if (!state.photo) return; state.photo.canvas = rotateCanvas(state.photo.canvas, 90); showPhoto(); };
 $("#btnClearPhoto").onclick = () => { state.photo = null; state.recog = []; $("#photoPreview").classList.add("hidden"); $("#recogResult").innerHTML = ""; };
 
 function recognizePrompt() {
   return `너는 학생의 오답노트를 정리해 주는 친절한 선생님이다. 사진은 학생이 푼 시험지·문제집·학습지다.
 학생 학년: ${grade() || "모름(사진을 보고 짐작)"}
 할 일
+0. 사진이 옆으로 눕거나 거꾸로 찍혔을 수 있다. 글자 방향을 보고 머릿속으로 바로 세워서 읽는다.
+   사진을 바로 세우려면 시계 방향으로 몇 도 돌려야 하는지 rotate 에 0, 90, 180, 270 중 하나로 적는다.
+   figureBox 는 돌리기 전, 보낸 사진 그대로를 기준으로 적는다.
 1. 사진 속 문제를 하나하나 찾는다. 잘려서 다 보이지 않는 문제는 빼고, 온전히 보이는 문제만 정리한다.
 2. 채점 표시(빗금, X표, 빨간 줄, 세모)가 있으면 그것으로 틀린 문제를 판단한다. 동그라미는 맞은 문제다. 채점 표시가 없으면 학생 답과 정답을 비교해 판단한다.
 3. 정답이 사진에 없으면 직접 풀어서 정답을 쓰고 answerFromAI 를 true 로 한다.
@@ -554,16 +587,36 @@ function recognizePrompt() {
 8. subject 는 다음 중 하나: ${SUBJECTS.join(", ")}
 
 아래 JSON 하나만 출력한다.
-{"problems":[{"number":"문제 번호","subject":"과목","unit":"단원(짐작)","type":"문제 유형(짧게)","question":"문제 글","choices":[],"myAnswer":"학생이 쓴 답, 없으면 빈 문자열","correctAnswer":"정답","answerFromAI":false,"isWrong":true,"wrongReason":"","explanation":"","hasFigure":false,"figureBox":[]}]}`;
+{"rotate":0,"problems":[{"number":"문제 번호","subject":"과목","unit":"단원(짐작)","type":"문제 유형(짧게)","question":"문제 글","choices":[],"myAnswer":"학생이 쓴 답, 없으면 빈 문자열","correctAnswer":"정답","answerFromAI":false,"isWrong":true,"wrongReason":"","explanation":"","hasFigure":false,"figureBox":[]}]}`;
 }
 
+async function readPhotoOnce() {
+  const b64 = state.photo.canvas.toDataURL("image/jpeg", 0.85).split(",")[1];
+  const out = await askAI([recognizePrompt(), { inlineData: { data: b64, mimeType: "image/jpeg" } }]);
+  const probs = Array.isArray(out.problems) ? out.problems.filter((p) => p && p.question) : [];
+  const rot = [90, 180, 270].includes(+out.rotate) ? +out.rotate : 0;
+  if (rot && probs.length) {
+    // 사진을 바로 세우고, 그림 위치도 같이 돌리기
+    state.photo.canvas = rotateCanvas(state.photo.canvas, rot); showPhoto();
+    probs.forEach((p) => { p.figureBox = rotateBox(p.figureBox, rot); });
+  }
+  return probs;
+}
 $("#btnRecognize").onclick = async () => {
   if (!state.photo) return;
-  busy(true, "사진 속 문제를 읽는 중 (10~30초)");
+  const t0 = Date.now();
+  let msg = "사진 속 문제를 읽는 중";
+  busy(true, msg + " (10~30초)");
+  const tick = setInterval(() => busy(true, `${msg} · ${Math.round((Date.now() - t0) / 1000)}초`), 1000);
   try {
-    const b64 = state.photo.canvas.toDataURL("image/jpeg", 0.85).split(",")[1];
-    const out = await askAI([recognizePrompt(), { inlineData: { data: b64, mimeType: "image/jpeg" } }]);
-    const probs = Array.isArray(out.problems) ? out.problems : [];
+    let probs = await readPhotoOnce();
+    if (!probs.length) {
+      // 못 찾으면 사진을 옆으로 돌려 한 번 더
+      msg = "사진을 돌려서 한 번 더 읽는 중";
+      state.photo.canvas = rotateCanvas(state.photo.canvas, 90); showPhoto();
+      probs = await readPhotoOnce();
+      if (!probs.length) { state.photo.canvas = rotateCanvas(state.photo.canvas, 270); showPhoto(); }
+    }
     state.recog = probs.map((p) => ({
       ...p,
       subject: SUBJECTS.includes(p.subject) ? p.subject : "기타",
@@ -572,8 +625,11 @@ $("#btnRecognize").onclick = async () => {
       keep: p.isWrong !== false
     }));
     renderRecog();
-    if (!probs.length) toast("문제를 찾지 못했어요. 더 가까이, 밝게 찍어 보세요", 3500);
+    if (!probs.length) $("#recogResult").innerHTML = `<div class="card"><h3>문제를 찾지 못했어요</h3>
+      <p class="muted">위의 돌리기 단추로 글자가 바로 서게 맞춘 뒤 다시 눌러 보세요.<br>
+      그래도 안 되면 문제 2~3개만 나오게 가까이, 밝은 곳에서, 그림자 없이 찍어 주세요.</p></div>`;
   } catch (e) { toast(aiErrorText(e), 8000); }
+  clearInterval(tick);
   busy(false);
 };
 

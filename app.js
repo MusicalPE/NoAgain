@@ -12,7 +12,11 @@ import { getAI, getGenerativeModel, GoogleAIBackend } from "https://www.gstatic.
 // ───────── 작은 도구 ─────────
 const $ = (s) => document.querySelector(s);
 const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
-const rich = (s) => esc(s).replace(/\n/g, "<br>");
+// 이미 망가져 저장된 수식 되살리기: 안 보이는 특수 문자(\f 등)로 바뀐 \frac, \times … 와 \ 가 빠진 rac{
+const cleanTeX = (s) => String(s ?? "")
+  .replace(/\f/g, "\\f").replace(/\x08/g, "\\b").replace(/\t(?=[a-z])/g, "\\t").replace(/\r(?=[a-z])/g, "\\r")
+  .replace(/(^|[^\\a-zA-Z])(d?)rac\{/g, "$1\\$2frac{").replace(/(^|[^\\a-zA-Z])(times|div|cdot)(?![a-zA-Z])/g, (m, a, b, i, all) => /\$/.test(all.slice(0, i)) ? `${a}\\${b}` : m);
+const rich = (s) => esc(cleanTeX(s)).replace(/\n/g, "<br>");
 const CIRCLED = "①②③④⑤⑥⑦⑧⑨⑩";
 function typeset(el) {
   if (!el || !window.renderMathInElement) return;
@@ -39,7 +43,7 @@ document.title = NAME;
 
 // 답 비교용 정리: 띄어쓰기·마침표·수식 기호를 빼고, ①을 1로
 export function normAnswer(s) {
-  return String(s ?? "")
+  return cleanTeX(s)
     .replace(/[①-⑩]/g, (c) => String(CIRCLED.indexOf(c) + 1))
     .replace(/\$|\\,|\\ |\{|\}/g, "")
     .replace(/\\(d?frac)(\d)(\d)/g, "$2/$3")
@@ -351,11 +355,13 @@ function fillSubjectSelect(sel, withAll = true) {
 
 // ───────── 답 쓰는 칸 (객관식·분수·글) ─────────
 // 분수는 [자연수] [분자/분모] 칸에 숫자만 넣으면 된다
-const isFracAns = (a) => /\\d?frac|\d\s*\/\s*\d/.test(String(a || ""));
+const isFracAns = (a) => /\\d?frac|\d\s*\/\s*\d|[½⅓⅔¼¾⅕⅖⅗⅘⅙⅚⅛⅜⅝⅞]/.test(cleanTeX(a));
+// 정답이 분수거나, 분수 단원 문제인데 정답이 숫자뿐이 아니면 분수 칸을 먼저 보여 주기
+const wantsFrac = (n) => isFracAns(n.correctAnswer) || (/분수/.test(`${n.unit} ${n.type}`) && !/^\s*\d+\s*$/.test(cleanTeX(n.correctAnswer).replace(/\$/g, "")));
 function answerBoxHTML(n) {
   if (n.choices && n.choices.length)
     return `<div class="ans-box" data-mode="choice"><div class="choice-btns">${n.choices.map((c, i) => `<button type="button" data-ch="${i}">${CIRCLED[i]} ${rich(c)}</button>`).join("")}</div></div>`;
-  const frac = isFracAns(n.correctAnswer);
+  const frac = wantsFrac(n);
   return `<div class="ans-box" data-mode="${frac ? "frac" : "text"}">
     <div class="frac-in"${frac ? "" : " hidden"}>
       <input class="fw" inputmode="numeric" autocomplete="off" aria-label="자연수 (없으면 비워 두기)" placeholder=" ">
@@ -557,15 +563,15 @@ function editFormHTML(n, prefix) {
       <label>단원<input name="unit" value="${esc(n.unit)}"></label>
     </div>
     <label>유형<input name="type" value="${esc(n.type)}"></label>
-    <label>문제 (수식은 $ 로 감싸기, 예: $\\frac{1}{2}$)<textarea name="question">${esc(n.question)}</textarea></label>
+    <label>문제 (수식은 $ 로 감싸기, 예: $\\frac{1}{2}$)<textarea name="question">${esc(cleanTeX(n.question))}</textarea></label>
     <div class="preview-box" data-preview>${rich(n.question)}</div>
-    <label>보기 (한 줄에 하나, 없으면 비워 두기)<textarea name="choices" style="min-height:50px">${esc((n.choices || []).join("\n"))}</textarea></label>
+    <label>보기 (한 줄에 하나, 없으면 비워 두기)<textarea name="choices" style="min-height:50px">${esc(cleanTeX((n.choices || []).join("\n")))}</textarea></label>
     <div class="two">
-      <label>내 답<input name="myAnswer" value="${esc(n.myAnswer)}"></label>
-      <label>정답<input name="correctAnswer" value="${esc(n.correctAnswer)}"></label>
+      <label>내 답<input name="myAnswer" value="${esc(cleanTeX(n.myAnswer))}"></label>
+      <label>정답<input name="correctAnswer" value="${esc(cleanTeX(n.correctAnswer))}"></label>
     </div>
-    <label>틀린 이유<textarea name="wrongReason" style="min-height:50px">${esc(n.wrongReason)}</textarea></label>
-    <label>풀이<textarea name="explanation">${esc(n.explanation)}</textarea></label>
+    <label>틀린 이유<textarea name="wrongReason" style="min-height:50px">${esc(cleanTeX(n.wrongReason))}</textarea></label>
+    <label>풀이<textarea name="explanation">${esc(cleanTeX(n.explanation))}</textarea></label>
   </div>`;
 }
 function readForm(root) {

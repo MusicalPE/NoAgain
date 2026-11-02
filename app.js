@@ -218,6 +218,7 @@ onAuthStateChanged(auth, async (user) => {
   busy(false);
   await loadNotes();
   show("list");
+  resumeJobs();
 });
 
 // ───────── 같이 쓰는 노트 ─────────
@@ -331,6 +332,61 @@ function fillSubjectSelect(sel, withAll = true) {
   sel.innerHTML = (withAll ? `<option value="all">모든 과목</option>` : "") + list.map((s) => `<option>${esc(s)}</option>`).join("");
 }
 
+// ───────── 답 쓰는 칸 (객관식·분수·글) ─────────
+// 분수는 [자연수] [분자/분모] 칸에 숫자만 넣으면 된다
+const isFracAns = (a) => /\\d?frac|\d\s*\/\s*\d/.test(String(a || ""));
+function answerBoxHTML(n) {
+  if (n.choices && n.choices.length)
+    return `<div class="ans-box" data-mode="choice"><div class="choice-btns">${n.choices.map((c, i) => `<button type="button" data-ch="${i}">${CIRCLED[i]} ${rich(c)}</button>`).join("")}</div></div>`;
+  const frac = isFracAns(n.correctAnswer);
+  return `<div class="ans-box" data-mode="${frac ? "frac" : "text"}">
+    <div class="frac-in"${frac ? "" : " hidden"}>
+      <input class="fw" inputmode="numeric" autocomplete="off" aria-label="자연수 (없으면 비워 두기)" placeholder=" ">
+      <span class="fstack"><input class="fn" inputmode="numeric" autocomplete="off" aria-label="분자"><i></i><input class="fd" inputmode="numeric" autocomplete="off" aria-label="분모"></span>
+      <span class="muted frac-help">큰 칸은 자연수<br>없으면 비워요</span>
+    </div>
+    <input class="answer-in txt"${frac ? " hidden" : ""} placeholder="답을 써 주세요" autocomplete="off">
+    <button type="button" class="btn-text small" data-swap>${frac ? "글로 쓰기" : "분수로 쓰기"}</button>
+  </div>`;
+}
+function wireAnswerBox(root, onEnter) {
+  const box = root.querySelector(".ans-box"); if (!box) return;
+  box.querySelectorAll("[data-ch]").forEach((b) => (b.onclick = () => {
+    if (box.dataset.locked) return;
+    box.querySelectorAll("[data-ch]").forEach((x) => x.classList.remove("sel")); b.classList.add("sel"); box.dataset.sel = b.dataset.ch;
+  }));
+  const sw = box.querySelector("[data-swap]");
+  if (sw) sw.onclick = () => {
+    const toFrac = box.dataset.mode !== "frac"; box.dataset.mode = toFrac ? "frac" : "text";
+    box.querySelector(".frac-in").hidden = !toFrac; box.querySelector(".txt").hidden = toFrac; sw.textContent = toFrac ? "글로 쓰기" : "분수로 쓰기";
+  };
+  box.querySelectorAll("input").forEach((inp) => (inp.onkeydown = (e) => { if (e.key === "Enter" && onEnter) onEnter(); }));
+}
+// 쓴 답 읽기 → { given: 보여 줄 답, cands: 비교할 후보들 } (안 썼으면 null)
+function readAnswer(root, n) {
+  const box = root.querySelector(".ans-box"); if (!box) return null;
+  if (box.dataset.mode === "choice") {
+    if (box.dataset.sel == null) return null;
+    const i = +box.dataset.sel; return { given: CIRCLED[i], cands: [CIRCLED[i], String(i + 1), n.choices[i]] };
+  }
+  if (box.dataset.mode === "frac") {
+    const v = (c) => box.querySelector(c).value.replace(/\D/g, "");
+    const w = v(".fw"), nu = v(".fn"), de = v(".fd");
+    if (!nu && !de) return w ? { given: w, cands: [w] } : null;
+    if (!nu || !de) return { error: "분자와 분모를 둘 다 써 주세요" };
+    const g = (w ? w + " " : "") + nu + "/" + de; return { given: g, cands: [g] };
+  }
+  const t = box.querySelector(".txt").value.trim(); return t ? { given: t, cands: [t] } : null;
+}
+const judgeAnswer = (n, a) => { const right = normAnswer(n.correctAnswer); return !!right && a.cands.some((c) => normAnswer(c) === right); };
+// 푼 기록 남기기 (두 번 연속 맞히면 익힘)
+function solvedData(n, ok, given) {
+  const data = { tryCount: (n.tryCount || 0) + 1, lastTriedAt: Date.now(), lastAnswer: given || "" };
+  if (ok) { data.correctStreak = (n.correctStreak || 0) + 1; if (data.correctStreak >= 2) data.status = "mastered"; }
+  else { data.correctStreak = 0; data.status = "wrong"; data.wrongCount = (n.wrongCount || 0) + 1; }
+  return data;
+}
+
 // ───────── 문제 카드 ─────────
 function choicesHTML(choices) {
   if (!choices || !choices.length) return "";
@@ -340,7 +396,9 @@ function noteCard(n) {
   const parent = n.parentId ? state.notes.find((x) => x.id === n.parentId) : null;
   const col = subjColor(n.subject);
   // 내 답이 정답과 같거나, 처음 찍을 때 맞은 문제로 저장된 경우는 맞은 답으로 보여 주기
-  const mineOk = !!n.myAnswer && (normAnswer(n.myAnswer) === normAnswer(n.correctAnswer) || (n.source === "photo" && !n.wrongCount));
+  const mineOk = !!n.myAnswer && (n.myAnswerOk || normAnswer(n.myAnswer) === normAnswer(n.correctAnswer) || (n.source === "photo" && !n.wrongCount));
+  // 비슷한 문제는 아이가 먼저 풀어 봐야 답과 풀이가 보인다
+  const practice = n.source === "ai" && !n.tryCount && !n.myAnswer;
   return `<article class="note" data-id="${n.id}" style="--sc:${col}">
     <span class="flag">${esc(n.subject)}</span>
     <div class="note-head">
@@ -352,7 +410,8 @@ function noteCard(n) {
     </div>
     <div class="q">${rich(n.question)}</div>
     ${n.figure ? `<img class="fig" src="${n.figure}" alt="문제 그림">` : ""}
-    ${choicesHTML(n.choices)}
+    ${practice ? `<div class="practice">${answerBoxHTML(n)}
+      <div class="row" style="margin-top:8px"><button class="btn red" data-act="check">답 확인</button><span class="muted small">답을 써야 정답과 풀이가 보여요</span></div></div>` : `${choicesHTML(n.choices)}
     <div class="ans">
       ${n.myAnswer ? `<div class="mine ${mineOk ? "ok" : ""}">내 답: ${rich(n.myAnswer)}</div>` : ""}
       <div class="right">정답: ${rich(n.correctAnswer || "(없음)")}${n.answerFromAI ? ` <span class="muted small">(AI가 푼 답)</span>` : ""}</div>
@@ -360,6 +419,7 @@ function noteCard(n) {
     ${n.wrongReason || n.explanation ? `<details class="exp"><summary>${n.wrongReason && !mineOk ? "틀린 이유와 풀이" : "풀이"}</summary>
       ${n.wrongReason && !mineOk ? `<p><b>틀린 이유</b><br>${rich(n.wrongReason)}</p>` : ""}
       ${n.explanation ? `<p><b>풀이</b><br>${rich(n.explanation)}</p>` : ""}</details>` : ""}
+    ${n.source === "ai" && n.myAnswer && !mineOk ? `<button class="btn-text small" data-act="fixok">내 답도 맞는 답이에요</button>` : ""}`}
     ${parent ? `<p class="muted small">원래 문제: ${esc(parent.question.slice(0, 40))}…</p>` : ""}
     <div class="note-actions">
       <button class="btn sm" data-act="similar">비슷한 문제 ${SIMILAR_COUNT}개 더</button>
@@ -426,6 +486,7 @@ function renderList() {
   const box = $("#noteList");
   if (!state.notes.length) { box.innerHTML = `<div class="empty">아직 모은 오답이 없어요.<br>아래 "찍기"에서 틀린 문제를 찍어 올려 보세요.</div>`; return; }
   box.innerHTML = list.length ? list.map(noteCard).join("") : `<div class="empty">조건에 맞는 문제가 없어요.</div>`;
+  box.querySelectorAll(".note .practice").forEach((p) => { const card = p.closest(".note"); wireAnswerBox(p, () => card.querySelector('[data-act="check"]').click()); });
   typeset(box);
 }
 ["#fStatus", "#fSimilar"].forEach((s) => ($(s).onchange = renderList));
@@ -451,6 +512,18 @@ $("#noteList").addEventListener("click", async (e) => {
     renderList();
   } else if (act === "edit") {
     openEdit(n);
+  } else if (act === "check") {
+    const card = btn.closest(".note"), a = readAnswer(card, n);
+    if (!a) { toast(n.choices && n.choices.length ? "답을 골라 주세요" : "답을 써 주세요"); return; }
+    if (a.error) { toast(a.error); return; }
+    const ok = judgeAnswer(n, a);
+    try { await patchNote(id, { ...solvedData(n, ok, a.given), myAnswer: a.given }); } catch (e) { toast("기록하지 못했어요: " + (e.code || e.message)); return; }
+    toast(ok ? "맞았어요! 한 번 더 맞히면 익힘이 돼요" : "아쉬워요. 정답과 풀이를 확인해 봐요", 3500);
+    renderList();
+    const again = document.querySelector(`.note[data-id="${id}"] details.exp`); if (again && !ok) again.open = true;
+  } else if (act === "fixok") {
+    await patchNote(id, { myAnswerOk: true, correctStreak: (n.correctStreak || 0) + 1, wrongCount: Math.max(0, (n.wrongCount || 1) - 1) });
+    renderList(); toast("맞은 답으로 고쳤어요");
   } else if (act === "similar") {
     askNotifyOnce();
     enqueueSimilar([n]);
@@ -875,8 +948,22 @@ const leftText = (sec) => (sec <= 3 ? "거의 다 됐어요" : sec < 60 ? `약 $
 
 // ───────── 뒤에서 비슷한 문제 만들기 (화면을 바꿔도 계속) ─────────
 const jobs = { queue: [], running: false, done: 0, made: 0, total: 0, fails: 0, lastErr: null };
+// 만들 차례를 휴대폰에 적어 두기 → 앱을 껐다 켜도 이어서 만들기
+const JOBKEY = () => "odapJobs_" + (state.nb ? state.nb.id : "");
+function saveJobs() { try { localStorage.setItem(JOBKEY(), JSON.stringify(jobs.queue.map((n) => n.id).concat(jobs.current ? [jobs.current] : []))); } catch (_) {} }
+function resumeJobs() {
+  try {
+    const ids = JSON.parse(localStorage.getItem(JOBKEY()) || "[]");
+    const notes = ids.map((id) => state.notes.find((n) => n.id === id)).filter(Boolean);
+    if (notes.length && !jobs.running) { enqueueSimilar(notes); toast(`멈췄던 비슷한 문제 만들기를 이어서 해요 (${notes.length}문제)`, 3500); }
+  } catch (_) {}
+}
+// 화면이 꺼져 있거나 다른 앱에 가 있으면, 돌아올 때까지 기다리기
+const whenVisible = () => document.visibilityState === "visible" ? Promise.resolve()
+  : new Promise((r) => document.addEventListener("visibilitychange", function f() { if (document.visibilityState === "visible") { document.removeEventListener("visibilitychange", f); r(); } }));
 function enqueueSimilar(notes) {
-  notes.forEach((n) => jobs.queue.push(n));
+  notes.forEach((n) => { if (!jobs.queue.some((q) => q.id === n.id) && jobs.current !== n.id) jobs.queue.push(n); });
+  saveJobs();
   jobs.total += notes.length;
   renderJobChip();
   if (!jobs.running) runJobs();
@@ -885,11 +972,20 @@ async function runJobs() {
   jobs.running = true;
   const tick = setInterval(renderJobChip, 1000);
   while (jobs.queue.length) {
+    await whenVisible();
     const n = jobs.queue.shift();
+    jobs.current = n.id; saveJobs();
     jobs.started = Date.now();
     renderJobChip();
     try { jobs.made += await makeSimilar(n, SIMILAR_COUNT); recordSec("similar", (Date.now() - jobs.started) / 1000); }
-    catch (e) { jobs.fails++; jobs.lastErr = e; }
+    catch (e) {
+      // 다른 앱에 가 있는 동안 끊긴 거면, 돌아왔을 때 다시
+      if ((document.visibilityState !== "visible" || /network|fetch|abort|offline/i.test(String(e?.message || e))) && !n._retried) {
+        n._retried = true; jobs.queue.unshift(n); jobs.current = null; saveJobs(); continue;
+      }
+      jobs.fails++; jobs.lastErr = e;
+    }
+    jobs.current = null; saveJobs();
     jobs.done++;
     renderJobChip();
     if (state.view === "list") renderList();
@@ -981,9 +1077,7 @@ function renderRetry() {
       ${n.source === "ai" ? `<span class="tag ai">비슷한 문제</span>` : ""}</div>
     <div class="q">${rich(n.question)}</div>
     ${n.figure ? `<img class="fig" src="${n.figure}">` : ""}
-    ${hasChoices
-      ? `<div class="choice-btns">${n.choices.map((c, i) => `<button data-ch="${i}">${CIRCLED[i]} ${rich(c)}</button>`).join("")}</div>`
-      : `<input class="answer-in" id="ansIn" placeholder="답을 써 주세요" autocomplete="off">`}
+    ${answerBoxHTML(n)}
     <div id="verdict"></div>
     <div class="row" style="margin-top:12px" id="retryBtns">
       <button class="btn primary" id="btnCheck">확인</button>
@@ -991,27 +1085,19 @@ function renderRetry() {
     </div>
   </div>`;
   typeset(box);
-  r.answer = ""; r.checked = false; r.choiceIdx = -1;
-  box.querySelectorAll("[data-ch]").forEach((b) => (b.onclick = () => {
-    if (r.checked) return;
-    box.querySelectorAll("[data-ch]").forEach((x) => x.classList.remove("sel")); b.classList.add("sel");
-    r.choiceIdx = +b.dataset.ch; r.answer = CIRCLED[r.choiceIdx];
-  }));
-  const inp = $("#ansIn"); if (inp) { inp.focus(); inp.onkeydown = (e) => { if (e.key === "Enter" && !r.checked) $("#btnCheck").click(); }; }
+  r.checked = false;
+  wireAnswerBox(box, () => { if (!r.checked) $("#btnCheck").click(); });
   $("#btnQuit").onclick = () => { state.retry = null; show("retry"); };
   $("#btnCheck").onclick = () => checkAnswer(n);
 }
 
 function checkAnswer(n) {
   const r = state.retry;
-  if (!$("#ansIn") && r.choiceIdx < 0) { toast("답을 골라 주세요"); return; }
-  const given = $("#ansIn") ? $("#ansIn").value.trim() : r.answer;
-  if (!given) { toast("답을 써 주세요"); return; }
-  r.checked = true;
-  const right = normAnswer(n.correctAnswer);
-  const cands = [given];
-  if (r.choiceIdx >= 0) { cands.push(String(r.choiceIdx + 1), n.choices[r.choiceIdx]); }
-  const auto = !!right && cands.some((c) => normAnswer(c) === right);
+  const a = readAnswer($("#retryPlay"), n);
+  if (!a) { toast(n.choices && n.choices.length ? "답을 골라 주세요" : "답을 써 주세요"); return; }
+  if (a.error) { toast(a.error); return; }
+  r.checked = true; $("#retryPlay .ans-box").dataset.locked = "1";
+  const given = a.given, auto = judgeAnswer(n, a);
   $("#verdict").innerHTML = `<div class="verdict ${auto ? "ok" : "no"}">
       <h3>${auto ? "맞았어요" : "다시 확인해 봐요"}</h3>
       <div>내 답: ${rich(given)}</div><div><b>정답: ${rich(n.correctAnswer)}</b></div>
@@ -1026,14 +1112,8 @@ function checkAnswer(n) {
 
 async function finishOne(n, ok) {
   const r = state.retry;
-  const data = { tryCount: (n.tryCount || 0) + 1, lastTriedAt: Date.now() };
-  if (ok) {
-    r.right++;
-    data.correctStreak = (n.correctStreak || 0) + 1;
-    if (data.correctStreak >= 2) data.status = "mastered";
-  } else {
-    data.correctStreak = 0; data.status = "wrong"; data.wrongCount = (n.wrongCount || 0) + 1;
-  }
+  if (ok) r.right++;
+  const data = solvedData(n, ok);
   try { await patchNote(n.id, data); } catch (e) { toast("기록하지 못했어요: " + (e.code || e.message)); }
   if (ok && data.status === "mastered") toast("두 번 연속 맞혀서 익힘이 됐어요");
   r.i++; renderRetry();

@@ -404,7 +404,21 @@ function readAnswer(root, n) {
   }
   const t = box.querySelector(".txt").value.trim(); return t ? { given: t, cands: [t] } : null;
 }
-const judgeAnswer = (n, a) => { const right = normAnswer(n.correctAnswer); return !!right && a.cands.some((c) => normAnswer(c) === right); };
+// 수·분수·대분수·소수를 값으로 바꾸기 (못 바꾸면 null)
+function numValue(s) {
+  const t = cleanTeX(s).replace(/\$/g, "").replace(/\\d?frac\{(\d+)\}\{(\d+)\}/g, " $1/$2").replace(/[,\s]+/g, " ").trim();
+  let m = t.match(/^(\d+)?\s*(\d+)\s*\/\s*(\d+)$/);
+  if (m) return +m[3] ? (+(m[1] || 0)) + (+m[2]) / (+m[3]) : null;
+  m = t.match(/^\d+(\.\d+)?$/);
+  return m ? +t : null;
+}
+// 정답 확인: 글자가 같거나, 값이 같으면 맞음 (2 2/4 = 2 1/2)
+const judgeAnswer = (n, a) => {
+  const right = normAnswer(n.correctAnswer); if (!right) return false;
+  if (a.cands.some((c) => normAnswer(c) === right)) return true;
+  const rv = numValue(n.correctAnswer);
+  return rv != null && a.cands.some((c) => { const v = numValue(c); return v != null && Math.abs(v - rv) < 1e-9; });
+};
 // 푼 기록 남기기 (맞히면 익힘, 틀리면 틀린 횟수 +1)
 function solvedData(n, ok, given) {
   const data = { tryCount: (n.tryCount || 0) + 1, lastTriedAt: Date.now(), lastAnswer: given || "" };
@@ -1063,7 +1077,7 @@ window.addEventListener("beforeunload", (e) => { if (jobs.running) { e.preventDe
 // 다 만들면 휴대폰 위쪽 알림으로 알려 주기
 let swReg = null;
 if ("serviceWorker" in navigator) {
-  navigator.serviceWorker.register("sw.js").then((r) => (swReg = r)).catch(() => {});
+  navigator.serviceWorker.register("sw.js", { updateViaCache: "none" }).then((r) => { swReg = r; r.update().catch(() => {}); }).catch(() => {});
   navigator.serviceWorker.addEventListener("message", (e) => { if (e.data && e.data.type === "openList" && state.user) show("list"); });
 }
 const canNotify = () => "Notification" in window && "serviceWorker" in navigator;

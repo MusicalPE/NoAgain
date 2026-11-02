@@ -9,3 +9,10 @@ self.addEventListener("notificationclick", (e) => {
     return self.clients.openWindow(self.registration.scope);
   })());
 });
+
+// 늘 새 판 받기: 이 앱의 파일은 휴대폰에 저장된 옛 판 대신 서버에 새 판이 있는지 먼저 확인
+self.addEventListener("fetch", (e) => {
+  const req = e.request;
+  if (req.method !== "GET" || new URL(req.url).origin !== self.location.origin) return;
+  e.respondWith(fetch(req, { cache: "no-cache" }).catch(() => fetch(req)));
+});

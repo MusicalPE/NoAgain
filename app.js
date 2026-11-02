@@ -1,5 +1,5 @@
 // 주또싫 (오답노트) — 음악적체육인
-import { FIREBASE_CONFIG, RECAPTCHA_SITE_KEY, AI_MODELS, SUBJECTS, SIMILAR_COUNT, APP_NAME, APP_SUBTITLE, SUBJECT_COLORS } from "./config.js";
+import { FIREBASE_CONFIG, RECAPTCHA_SITE_KEY, AI_MODELS, AI_MODELS_FAST, SUBJECTS, SIMILAR_COUNT, APP_NAME, APP_SUBTITLE, SUBJECT_COLORS } from "./config.js";
 import { initializeApp } from "https://www.gstatic.com/firebasejs/12.18.0/firebase-app.js";
 import { initializeAppCheck, ReCaptchaEnterpriseProvider, getToken as getAppCheckToken } from "https://www.gstatic.com/firebasejs/12.18.0/firebase-app-check.js";
 import { getAuth, GoogleAuthProvider, signInWithPopup, signInWithRedirect, onAuthStateChanged, signOut }
@@ -101,23 +101,31 @@ async function callModel(name, parts, temperature, json = true, ms = 60000) {
   return run(base);
 }
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
-async function askAI(parts, temperature = 0.2, onStep) {
+// 붐비거나 안 된 모델은 10분 동안 뒤로 미루기 (헛걸음 줄이기)
+const RESTING = "odapResting";
+const restMap = () => { try { return JSON.parse(localStorage.getItem(RESTING) || "{}"); } catch (_) { return {}; } };
+function restModel(name) { try { const m = restMap(); m[name] = Date.now() + 10 * 60 * 1000; localStorage.setItem(RESTING, JSON.stringify(m)); } catch (_) {} }
+function orderModels(list) {
+  const m = restMap(), now = Date.now();
+  return [...list.filter((n) => !(m[n] > now)), ...list.filter((n) => m[n] > now)];
+}
+async function askAI(parts, temperature = 0.2, onStep, list = AI_MODELS) {
   let lastErr;
-  for (const name of AI_MODELS) {
-    for (let tryNo = 1; tryNo <= 2; tryNo++) {
-      try {
-        if (onStep) onStep(name, tryNo);
-        const res = await callModel(name, parts, temperature);
-        return parseJSON(res.response.text());
-      } catch (e) {
-        lastErr = e;
-        const msg = String(e?.message || e);
-        // 서버가 붐비면 3초 쉬고 같은 모델로 한 번 더
-        if (BUSY_RE.test(msg) && tryNo === 1) { await sleep(3000); continue; }
-        // 붐빔이 계속되거나, 모델이 없거나, 무료 사용량이 찼거나, 너무 오래 걸리면 다음 모델로
-        if (BUSY_RE.test(msg) || NO_MODEL_RE.test(msg) || QUOTA_RE.test(msg) || /^timeout/i.test(msg)) break;
-        throw e;
-      }
+  const models = orderModels(list);
+  for (let i = 0; i < models.length; i++) {
+    const name = models[i];
+    try {
+      if (onStep) onStep(name, i);
+      const t = Date.now();
+      const res = await callModel(name, parts, temperature, true, 45000);
+      state.lastAI = { model: name, sec: Math.round((Date.now() - t) / 1000) };
+      return parseJSON(res.response.text());
+    } catch (e) {
+      lastErr = e;
+      const msg = String(e?.message || e);
+      // 붐비거나, 모델이 없거나, 무료 사용량이 찼거나, 너무 오래 걸리면 바로 다음 모델로
+      if (BUSY_RE.test(msg) || NO_MODEL_RE.test(msg) || QUOTA_RE.test(msg) || /^timeout/i.test(msg)) { restModel(name); continue; }
+      throw e;
     }
   }
   throw lastErr;
@@ -573,7 +581,7 @@ async function openDiag() {
     try { const r = await withTimeout(getAppCheckToken(appCheck, true), 20000, "20초 넘게 걸림"); done(li, !!(r && r.token), sec(t)); }
     catch (e) { done(li, false, short(e)); }
   }
-  for (const name of AI_MODELS) {
+  for (const name of [...new Set([...AI_MODELS_FAST, ...AI_MODELS])]) {
     li = line(`3. AI 대답 (${name})`); t = Date.now();
     try {
       const r = await callModel(name, ["숫자 1만 답해."], 0, false, 40000);
@@ -650,7 +658,7 @@ function recognizePrompt() {
 async function readPhotoOnce() {
   const b64 = state.photo.canvas.toDataURL("image/jpeg", 0.8).split(",")[1];
   const out = await askAI([recognizePrompt(), { inlineData: { data: b64, mimeType: "image/jpeg" } }], 0.2,
-    (name, n) => { state.aiNote = n > 1 || name !== AI_MODELS[0] ? ` (붐벼서 ${name.replace("gemini-", "")}로 다시)` : ""; });
+    (name, i) => { state.aiNote = i > 0 ? ` (붐벼서 ${name.replace("gemini-", "")}로 다시)` : ""; }, AI_MODELS_FAST);
   const probs = Array.isArray(out.problems) ? out.problems.filter((p) => p && p.question) : [];
   const rot = [90, 180, 270].includes(+out.rotate) ? +out.rotate : 0;
   if (rot && probs.length) {
@@ -695,7 +703,8 @@ $("#btnRecognize").onclick = async () => {
 function renderRecog() {
   const box = $("#recogResult");
   if (!state.recog.length) { box.innerHTML = ""; return; }
-  box.innerHTML = `<p class="muted">문제 ${state.recog.length}개를 찾았어요. 틀린 문제에는 미리 체크해 두었어요. 내용을 확인하고 고칠 곳은 고쳐 주세요.</p>` +
+  const how = state.lastAI ? ` <span class="small">(${state.lastAI.sec}초 · ${esc(state.lastAI.model.replace("gemini-", ""))})</span>` : "";
+  box.innerHTML = `<p class="muted">문제 ${state.recog.length}개를 찾았어요${how}. 틀린 문제에는 미리 체크해 두었어요. 내용을 확인하고 고칠 곳은 고쳐 주세요.</p>` +
     state.recog.map((p, i) => `<div class="card recog ${p.keep ? "" : "notwrong"}" data-i="${i}">
       <div class="note-head">
         <label class="chk" style="margin:0"><input type="checkbox" data-keep ${p.keep ? "checked" : ""}> <b>${esc(p.number || i + 1)}번 저장</b></label>

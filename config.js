@@ -17,9 +17,11 @@ export const FIREBASE_CONFIG = {
 //    AI 기능을 켜면 App Check 가 자동으로 켜지므로 꼭 넣어야 AI가 동작합니다.
 export const RECAPTCHA_SITE_KEY = "6LfyygQuAAAAANi6jh6_u3kexVPJN1zu7d_JcOAA";
 
-// 3) 사용할 AI 모델 이름 (앞에서부터 차례로 시도)
-//    콘솔 AI Logic 화면에서 쓸 수 있는 모델 이름을 확인해 맨 앞에 두면 됩니다.
-export const AI_MODELS = ["gemini-3.8-flash", "gemini-3.6-flash", "gemini-2.5-flash"];
+// 3) 사용할 AI 모델 이름 (앞에서부터 차례로 시도, 붐비거나 안 되면 다음 모델로)
+//    AI_MODELS_FAST : 사진 읽기용 — 빠른 모델 먼저
+//    AI_MODELS      : 비슷한 문제 만들기용 — 정확한 모델 먼저
+export const AI_MODELS_FAST = ["gemini-3.5-flash-lite", "gemini-3.6-flash", "gemini-2.5-flash", "gemini-3.8-flash"];
+export const AI_MODELS = ["gemini-3.8-flash", "gemini-3.6-flash", "gemini-2.5-flash", "gemini-3.5-flash-lite"];
 
 // 앱 이름 (화면 위쪽과 시험지에 나옵니다)
 export const APP_NAME = "주또싫";

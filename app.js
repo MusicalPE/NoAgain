@@ -49,8 +49,9 @@ document.title = NAME;
 export function normAnswer(s) {
   return fixMath(s)
     .replace(/[①-⑩]/g, (c) => String(CIRCLED.indexOf(c) + 1))
+    .replace(/\\d?frac\{([^}]*)\}\{([^}]*)\}/g, " $1/$2")
     .replace(/\$|\\,|\\ |\{|\}/g, "")
-    .replace(/\\(d?frac)(\d)(\d)/g, "$2/$3")
+    .replace(/(\d)\s+(\d+\s*\/)/g, "$1+$2")
     .replace(/\s+/g, "").replace(/[.。]+$/, "").replace(/번$/, "")
     .toLowerCase();
 }

@@ -16,7 +16,11 @@ const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "
 const cleanTeX = (s) => String(s ?? "")
   .replace(/\f/g, "\\f").replace(/\x08/g, "\\b").replace(/\t(?=[a-z])/g, "\\t").replace(/\r(?=[a-z])/g, "\\r")
   .replace(/(^|[^\\a-zA-Z])(d?)rac\{/g, "$1\\$2frac{").replace(/(^|[^\\a-zA-Z])(times|div|cdot)(?![a-zA-Z])/g, (m, a, b, i, all) => /\$/.test(all.slice(0, i)) ? `${a}\\${b}` : m);
-const rich = (s) => esc(cleanTeX(s)).replace(/\n/g, "<br>");
+// "2와 5분의 0" 같은 없는 표기는 2로, "5분의 0"은 0으로 바로잡기
+const fixMath = (s) => cleanTeX(s)
+  .replace(/(\d+)\s*\\d?frac\{0\}\{\d+\}/g, "$1").replace(/\\d?frac\{0\}\{\d+\}/g, "0")
+  .replace(/(^|[^\d/])(\d+)\s+0\s*\/\s*\d+(?![\d/])/g, "$1$2");
+const rich = (s) => esc(fixMath(s)).replace(/\n/g, "<br>");
 const CIRCLED = "①②③④⑤⑥⑦⑧⑨⑩";
 function typeset(el) {
   if (!el || !window.renderMathInElement) return;
@@ -43,7 +47,7 @@ document.title = NAME;
 
 // 답 비교용 정리: 띄어쓰기·마침표·수식 기호를 빼고, ①을 1로
 export function normAnswer(s) {
-  return cleanTeX(s)
+  return fixMath(s)
     .replace(/[①-⑩]/g, (c) => String(CIRCLED.indexOf(c) + 1))
     .replace(/\$|\\,|\\ |\{|\}/g, "")
     .replace(/\\(d?frac)(\d)(\d)/g, "$2/$3")
@@ -407,7 +411,7 @@ function readAnswer(root, n) {
 // 수·분수·대분수·소수를 값으로 바꾸기 (못 바꾸면 null)
 function numValue(s) {
   const t = cleanTeX(s).replace(/\$/g, "").replace(/\\d?frac\{(\d+)\}\{(\d+)\}/g, " $1/$2").replace(/[,\s]+/g, " ").trim();
-  let m = t.match(/^(\d+)?\s*(\d+)\s*\/\s*(\d+)$/);
+  let m = t.match(/^(?:(\d+)\s+)?(\d+)\s*\/\s*(\d+)$/);
   if (m) return +m[3] ? (+(m[1] || 0)) + (+m[2]) / (+m[3]) : null;
   m = t.match(/^\d+(\.\d+)?$/);
   return m ? +t : null;
@@ -962,6 +966,8 @@ async function makeSimilar(n, count) {
  표: {"type":"table","rows":[["요일","월","화"],["시간(분)","30","45"]]}
 - 원래 문제가 객관식이면 보기 4~5개짜리 객관식으로, 아니면 주관식으로 만든다. 보기는 choices 배열에 번호 없이 넣고, 정답은 "②"처럼 번호로 쓴다.
 - 만든 뒤 직접 풀어 보고 정답이 하나로 딱 정해지는지 확인한다. 애매하면 문제를 고친다.
+- 정답은 초등 교과서 표기로 쓴다. 분자가 0이면 분수로 쓰지 않는다(2와 5분의 0 → 2). 대분수의 분수 부분은 진분수로 쓴다.
+  답이 자연수로 떨어지는 문제를 만들 때는 그게 의도한 것인지 다시 확인한다.
 - 수식은 LaTeX 로 쓰고 $...$ 로 감싼다.
 - explanation 은 학생 눈높이의 단계별 풀이.
 
@@ -990,7 +996,7 @@ ${n.figureSpec ? "원래 문제의 그림 설계도: " + (typeof n.figureSpec ==
         // 파이어베이스는 [[…]] 처럼 겹친 목록을 저장하지 못해서 설계도는 글자로 바꿔 저장
         figure: pic, figureSpec: pic ? JSON.stringify(spec) : "",
         subject: n.subject, unit: n.unit, type: n.type, question: String(p.question),
-        choices: Array.isArray(p.choices) ? p.choices.map((c) => String(c ?? "")) : [], correctAnswer: String(p.correctAnswer ?? ""),
+        choices: Array.isArray(p.choices) ? p.choices.map((c) => String(c ?? "")) : [], correctAnswer: fixMath(String(p.correctAnswer ?? "")),
         answerFromAI: true, explanation: String(p.explanation ?? ""), source: "ai", parentId: n.id, wrongCount: 0, status: "wrong"
       });
       saved++;

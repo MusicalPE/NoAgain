@@ -79,6 +79,7 @@ function parseJSON(text) {
 }
 // 오류 구분: "generateContent" 안의 "rate" 같은 글자에 걸리지 않게 낱말 단위로 찾기
 const QUOTA_RE = /quota|\b429\b|exhausted|rate.?limit|too many requests/i;
+const BUSY_RE = /high demand|overloaded|unavailable|try again later|\b50[03]\b|\b504\b|deadline/i;
 const NO_MODEL_RE = /not found|\b404\b|not supported|unsupported|is not available|invalid model/i;
 // 시간 제한을 걸어 기다리기
 function withTimeout(promise, ms, label) {
@@ -99,17 +100,24 @@ async function callModel(name, parts, temperature, json = true, ms = 60000) {
   }
   return run(base);
 }
-async function askAI(parts, temperature = 0.2) {
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+async function askAI(parts, temperature = 0.2, onStep) {
   let lastErr;
   for (const name of AI_MODELS) {
-    try {
-      const res = await callModel(name, parts, temperature);
-      return parseJSON(res.response.text());
-    } catch (e) {
-      lastErr = e;
-      const msg = String(e?.message || e);
-      // 모델이 없거나, 무료 사용량이 찼거나, 너무 오래 걸리면 다음 모델로
-      if (!NO_MODEL_RE.test(msg) && !QUOTA_RE.test(msg) && !/^timeout/i.test(msg)) break;
+    for (let tryNo = 1; tryNo <= 2; tryNo++) {
+      try {
+        if (onStep) onStep(name, tryNo);
+        const res = await callModel(name, parts, temperature);
+        return parseJSON(res.response.text());
+      } catch (e) {
+        lastErr = e;
+        const msg = String(e?.message || e);
+        // 서버가 붐비면 3초 쉬고 같은 모델로 한 번 더
+        if (BUSY_RE.test(msg) && tryNo === 1) { await sleep(3000); continue; }
+        // 붐빔이 계속되거나, 모델이 없거나, 무료 사용량이 찼거나, 너무 오래 걸리면 다음 모델로
+        if (BUSY_RE.test(msg) || NO_MODEL_RE.test(msg) || QUOTA_RE.test(msg) || /^timeout/i.test(msg)) break;
+        throw e;
+      }
     }
   }
   throw lastErr;
@@ -119,6 +127,7 @@ function aiErrorText(e) {
   const raw = " (" + m.replace(/^\[[^\]]*\]\s*/, "").replace(/Error fetching from \S+\s*/i, "").replace(/^[:\s]+/, "").slice(0, 110) + ")";
   if (/^timeout/i.test(m)) return "AI가 답을 주지 않아 멈췄어요. [설정] > [AI 연결 점검]을 눌러 어디서 멈추는지 확인해 주세요";
   if (/app.?check|attestation|recaptcha/i.test(m)) return "App Check 설정을 확인해 주세요" + raw;
+  if (BUSY_RE.test(m)) return "AI 서버가 지금 붐벼서 모든 모델이 답하지 못했어요. 몇 분 뒤 다시 해 보세요";
   if (QUOTA_RE.test(m)) return "AI 사용량이 잠깐 넘쳤어요. 1~2분 뒤 다시 해 보세요" + raw;
   if (/api.*not.*enabled|\b403\b|permission/i.test(m)) return "AI Logic 이 켜져 있는지 확인해 주세요" + raw;
   return "AI가 답하지 못했어요" + raw;
@@ -640,7 +649,8 @@ function recognizePrompt() {
 
 async function readPhotoOnce() {
   const b64 = state.photo.canvas.toDataURL("image/jpeg", 0.8).split(",")[1];
-  const out = await askAI([recognizePrompt(), { inlineData: { data: b64, mimeType: "image/jpeg" } }]);
+  const out = await askAI([recognizePrompt(), { inlineData: { data: b64, mimeType: "image/jpeg" } }], 0.2,
+    (name, n) => { state.aiNote = n > 1 || name !== AI_MODELS[0] ? ` (붐벼서 ${name.replace("gemini-", "")}로 다시)` : ""; });
   const probs = Array.isArray(out.problems) ? out.problems.filter((p) => p && p.question) : [];
   const rot = [90, 180, 270].includes(+out.rotate) ? +out.rotate : 0;
   if (rot && probs.length) {
@@ -655,7 +665,8 @@ $("#btnRecognize").onclick = async () => {
   const t0 = Date.now();
   let msg = "사진 속 문제를 읽는 중";
   busy(true, msg + " (10~30초)");
-  const tick = setInterval(() => busy(true, `${msg} · ${Math.round((Date.now() - t0) / 1000)}초`), 1000);
+  state.aiNote = "";
+  const tick = setInterval(() => busy(true, `${msg} · ${Math.round((Date.now() - t0) / 1000)}초${state.aiNote || ""}`), 1000);
   try {
     let probs = await readPhotoOnce();
     if (!probs.length) {

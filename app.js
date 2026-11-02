@@ -1,7 +1,7 @@
 // 주또싫 (오답노트) — 음악적체육인
 import { FIREBASE_CONFIG, RECAPTCHA_SITE_KEY, AI_MODELS, SUBJECTS, SIMILAR_COUNT, APP_NAME, APP_SUBTITLE, SUBJECT_COLORS } from "./config.js";
 import { initializeApp } from "https://www.gstatic.com/firebasejs/12.18.0/firebase-app.js";
-import { initializeAppCheck, ReCaptchaEnterpriseProvider } from "https://www.gstatic.com/firebasejs/12.18.0/firebase-app-check.js";
+import { initializeAppCheck, ReCaptchaEnterpriseProvider, getToken as getAppCheckToken } from "https://www.gstatic.com/firebasejs/12.18.0/firebase-app-check.js";
 import { getAuth, GoogleAuthProvider, signInWithPopup, signInWithRedirect, onAuthStateChanged, signOut }
   from "https://www.gstatic.com/firebasejs/12.18.0/firebase-auth.js";
 import { getFirestore, collection, doc, addDoc, updateDoc, deleteDoc, getDocs, getDoc, setDoc, query, orderBy, where, arrayUnion, arrayRemove, writeBatch }
@@ -59,8 +59,9 @@ if (!FIREBASE_CONFIG.apiKey) {
 }
 const app = initializeApp(FIREBASE_CONFIG);
 if (["localhost", "127.0.0.1"].includes(location.hostname)) self.FIREBASE_APPCHECK_DEBUG_TOKEN = true;
+let appCheck = null;
 if (RECAPTCHA_SITE_KEY) {
-  initializeAppCheck(app, { provider: new ReCaptchaEnterpriseProvider(RECAPTCHA_SITE_KEY), isTokenAutoRefreshEnabled: true });
+  appCheck = initializeAppCheck(app, { provider: new ReCaptchaEnterpriseProvider(RECAPTCHA_SITE_KEY), isTokenAutoRefreshEnabled: true });
 }
 const auth = getAuth(app);
 const db = getFirestore(app);
@@ -79,22 +80,36 @@ function parseJSON(text) {
 // 오류 구분: "generateContent" 안의 "rate" 같은 글자에 걸리지 않게 낱말 단위로 찾기
 const QUOTA_RE = /quota|\b429\b|exhausted|rate.?limit|too many requests/i;
 const NO_MODEL_RE = /not found|\b404\b|not supported|unsupported|is not available|invalid model/i;
+// 시간 제한을 걸어 기다리기
+function withTimeout(promise, ms, label) {
+  let timer;
+  return Promise.race([promise, new Promise((_, no) => { timer = setTimeout(() => no(new Error("timeout: " + label)), ms); })])
+    .finally(() => clearTimeout(timer));
+}
+// 생각을 짧게 하도록 (모델이 이 설정을 모르면 빼고 다시)
+const THINK = { thinkingConfig: { thinkingBudget: 0 } };
+const THINK_RE = /thinking|budget|invalid.?argument|\b400\b/i;
+const noThink = new Set();
+async function callModel(name, parts, temperature, json = true, ms = 60000) {
+  const base = { temperature, ...(json ? { responseMimeType: "application/json" } : {}) };
+  const run = (cfg) => withTimeout(getGenerativeModel(ai, { model: name, generationConfig: cfg }).generateContent(parts), ms, `${name} 응답이 ${ms / 1000}초 넘게 없었어요`);
+  if (!noThink.has(name)) {
+    try { return await run({ ...base, ...THINK }); }
+    catch (e) { if (!THINK_RE.test(String(e?.message || e))) throw e; noThink.add(name); }
+  }
+  return run(base);
+}
 async function askAI(parts, temperature = 0.2) {
   let lastErr;
   for (const name of AI_MODELS) {
     try {
-      const model = getGenerativeModel(ai, { model: name, generationConfig: { responseMimeType: "application/json", temperature } });
-      let timer;
-      const res = await Promise.race([
-        model.generateContent(parts),
-        new Promise((_, no) => { timer = setTimeout(() => no(new Error("timeout: AI 응답이 90초 넘게 없었어요")), 90000); })
-      ]).finally(() => clearTimeout(timer));
+      const res = await callModel(name, parts, temperature);
       return parseJSON(res.response.text());
     } catch (e) {
       lastErr = e;
       const msg = String(e?.message || e);
-      // 모델이 없거나, 그 모델의 무료 사용량이 찼으면 다음 모델로
-      if (!NO_MODEL_RE.test(msg) && !QUOTA_RE.test(msg)) break;
+      // 모델이 없거나, 무료 사용량이 찼거나, 너무 오래 걸리면 다음 모델로
+      if (!NO_MODEL_RE.test(msg) && !QUOTA_RE.test(msg) && !/^timeout/i.test(msg)) break;
     }
   }
   throw lastErr;
@@ -102,7 +117,7 @@ async function askAI(parts, temperature = 0.2) {
 function aiErrorText(e) {
   const m = String(e?.message || e);
   const raw = " (" + m.replace(/^\[[^\]]*\]\s*/, "").replace(/Error fetching from \S+\s*/i, "").replace(/^[:\s]+/, "").slice(0, 110) + ")";
-  if (/^timeout/i.test(m)) return "AI가 너무 오래 걸려서 멈췄어요. 문제 2~3개만 나오게 가까이 찍어 다시 해 보세요";
+  if (/^timeout/i.test(m)) return "AI가 답을 주지 않아 멈췄어요. [설정] > [AI 연결 점검]을 눌러 어디서 멈추는지 확인해 주세요";
   if (/app.?check|attestation|recaptcha/i.test(m)) return "App Check 설정을 확인해 주세요" + raw;
   if (QUOTA_RE.test(m)) return "AI 사용량이 잠깐 넘쳤어요. 1~2분 뒤 다시 해 보세요" + raw;
   if (/api.*not.*enabled|\b403\b|permission/i.test(m)) return "AI Logic 이 켜져 있는지 확인해 주세요" + raw;
@@ -492,12 +507,14 @@ function openSettings() {
     <div class="row" style="margin-top:12px">
       <button class="btn primary" id="sSave">저장</button>
       <button class="btn" id="sOut">로그아웃</button>
+      <button class="btn" id="sDiag">AI 연결 점검</button>
       ${isOwner ? `<button class="btn ghost" id="sNew">새 노트 만들기</button>` : `<button class="btn ghost" id="sLeave">이 노트에서 나가기</button>`}
       <button class="btn ghost" id="sClose">닫기</button>
     </div>`);
   $("#sClose").onclick = closeModal;
   $("#sOut").onclick = async () => { closeModal(); state.notes = []; state.retry = null; state.nb = null; await signOut(auth); };
   $("#sInvite").onclick = () => openInvite();
+  $("#sDiag").onclick = () => openDiag();
   $("#sSave").onclick = async () => {
     const data = { name: $("#sName").value.trim() || nb.name, grade: $("#sGrade").value.trim() };
     try {
@@ -529,6 +546,33 @@ function openSettings() {
   };
 }
 
+// AI 연결 점검: 어디서 멈추는지 단계별로 보여 주기
+async function openDiag() {
+  openModal(`<h2>AI 연결 점검</h2><p class="muted small">한 단계씩 확인해요. 끝나면 이 화면을 캡처해 주세요.</p>
+    <ol id="diagList" class="diag"></ol><div class="row" style="margin-top:10px"><button class="btn" id="dBack">돌아가기</button></div>`);
+  $("#dBack").onclick = () => openSettings();
+  const line = (label) => { const li = document.createElement("li"); li.innerHTML = `${esc(label)} <span class="muted">확인 중…</span>`; $("#diagList").appendChild(li); return li; };
+  const done = (li, ok, text) => { li.querySelector("span").outerHTML = `<b class="${ok ? "ok" : "no"}">${ok ? "통과" : "멈춤"}</b> <span class="muted small">${esc(text)}</span>`; };
+  const short = (e) => String(e?.message || e).replace(/^\[[^\]]*\]\s*/, "").replace(/Error fetching from \S+\s*/i, "").slice(0, 140);
+  const sec = (t) => ((Date.now() - t) / 1000).toFixed(1) + "초";
+
+  let li = line("1. 인터넷 연결"); done(li, navigator.onLine, navigator.onLine ? "연결됨" : "인터넷이 끊겨 있어요");
+  li = line("2. App Check 확인 표 받기");
+  let t = Date.now();
+  if (!appCheck) done(li, false, "config.js 에 사이트 키가 없어요");
+  else {
+    try { const r = await withTimeout(getAppCheckToken(appCheck, true), 20000, "20초 넘게 걸림"); done(li, !!(r && r.token), sec(t)); }
+    catch (e) { done(li, false, short(e)); }
+  }
+  for (const name of AI_MODELS) {
+    li = line(`3. AI 대답 (${name})`); t = Date.now();
+    try {
+      const r = await callModel(name, ["숫자 1만 답해."], 0, false, 40000);
+      done(li, true, `${sec(t)} · "${String(r.response.text()).trim().slice(0, 10)}"${noThink.has(name) ? " · 생각 줄이기 안 됨" : ""}`);
+    } catch (e) { done(li, false, `${sec(t)} · ${short(e)}`); }
+  }
+}
+
 // QR 초대: 하루 동안 쓸 수 있는 초대 코드를 만들어 QR로 보여 주기
 async function openInvite() {
   const nb = state.nb;
@@ -558,7 +602,7 @@ async function onPhoto(file) {
   if (!file) return;
   try {
     const img = await loadImage(file);
-    state.photo = { canvas: imageToCanvas(img, 2000) };
+    state.photo = { canvas: imageToCanvas(img, 1600) };
     showPhoto();
     $("#photoPreview").classList.remove("hidden");
     $("#recogResult").innerHTML = ""; state.recog = [];
@@ -577,21 +621,25 @@ function recognizePrompt() {
 0. 사진이 옆으로 눕거나 거꾸로 찍혔을 수 있다. 글자 방향을 보고 머릿속으로 바로 세워서 읽는다.
    사진을 바로 세우려면 시계 방향으로 몇 도 돌려야 하는지 rotate 에 0, 90, 180, 270 중 하나로 적는다.
    figureBox 는 돌리기 전, 보낸 사진 그대로를 기준으로 적는다.
-1. 사진 속 문제를 하나하나 찾는다. 잘려서 다 보이지 않는 문제는 빼고, 온전히 보이는 문제만 정리한다.
-2. 채점 표시(빗금, X표, 빨간 줄, 세모)가 있으면 그것으로 틀린 문제를 판단한다. 동그라미는 맞은 문제다. 채점 표시가 없으면 학생 답과 정답을 비교해 판단한다.
-3. 정답이 사진에 없으면 직접 풀어서 정답을 쓰고 answerFromAI 를 true 로 한다.
-4. 수식은 LaTeX 로 쓰고 $...$ 로 감싼다(예: $\\frac{3}{4}+\\frac{1}{8}$). 수식이 아닌 글은 그대로 쓴다.
-5. 보기(①②③…)는 question 에 넣지 말고 choices 배열에 앞 번호 없이 넣는다. 정답이 보기 중 하나면 correctAnswer 는 "③" 처럼 번호로 쓴다.
-6. 문제에 그림·도형·그래프·표·지도처럼 글로 옮기기 어려운 부분이 있으면 hasFigure 를 true 로 하고, 그 부분이 사진 어디에 있는지 figureBox 에 [ymin, xmin, ymax, xmax] (사진 전체를 0~1000 으로 본 비율)로 적는다. 글로 옮길 수 있는 짧은 표는 question 안에 글로 적는다.
-7. wrongReason 은 학생 답을 보고 왜 틀렸을지 학생 눈높이로 한두 문장, explanation 은 학생 눈높이의 단계별 풀이로 쓴다.
-8. subject 는 다음 중 하나: ${SUBJECTS.join(", ")}
+1. 문제 글(question)·보기·그림은 "인쇄된 글자"만 읽는다. 연필·펜으로 쓴 손글씨, 풀이 계산, 낙서, 밑줄, 동그라미, 옆 페이지의 글은 문제 글에 넣지 않는다.
+   손글씨는 딱 두 가지에만 쓴다: 학생이 답 칸·괄호·밑줄 자리에 적은 최종 답(myAnswer), 그리고 채점 표시.
+   답 칸 밖의 계산 낙서는 학생 답으로 보지 않는다. 다만 wrongReason 을 쓸 때 어디서 틀렸는지 짐작하는 데는 참고해도 된다.
+   figureBox 는 인쇄된 그림만 감싸고, 그 위의 손글씨는 되도록 피한다.
+2. 사진 속 문제를 하나하나 찾는다. 잘려서 다 보이지 않는 문제는 빼고, 온전히 보이는 문제만 정리한다.
+3. 채점 표시(빗금, X표, 빨간 줄, 세모)가 있으면 그것으로 틀린 문제를 판단한다. 동그라미는 맞은 문제다. 채점 표시가 없으면 학생 답과 정답을 비교해 판단한다.
+4. 정답이 사진에 없으면 직접 풀어서 정답을 쓰고 answerFromAI 를 true 로 한다.
+5. 수식은 LaTeX 로 쓰고 $...$ 로 감싼다(예: $\\frac{3}{4}+\\frac{1}{8}$). 수식이 아닌 글은 그대로 쓴다.
+6. 보기(①②③…)는 question 에 넣지 말고 choices 배열에 앞 번호 없이 넣는다. 정답이 보기 중 하나면 correctAnswer 는 "③" 처럼 번호로 쓴다.
+7. 문제에 그림·도형·그래프·표·지도처럼 글로 옮기기 어려운 부분이 있으면 hasFigure 를 true 로 하고, 그 부분이 사진 어디에 있는지 figureBox 에 [ymin, xmin, ymax, xmax] (사진 전체를 0~1000 으로 본 비율)로 적는다. 글로 옮길 수 있는 짧은 표는 question 안에 글로 적는다.
+8. wrongReason 은 학생 답을 보고 왜 틀렸을지 학생 눈높이로 한두 문장, explanation 은 학생 눈높이의 단계별 풀이로 쓴다.
+9. subject 는 다음 중 하나: ${SUBJECTS.join(", ")}
 
 아래 JSON 하나만 출력한다.
 {"rotate":0,"problems":[{"number":"문제 번호","subject":"과목","unit":"단원(짐작)","type":"문제 유형(짧게)","question":"문제 글","choices":[],"myAnswer":"학생이 쓴 답, 없으면 빈 문자열","correctAnswer":"정답","answerFromAI":false,"isWrong":true,"wrongReason":"","explanation":"","hasFigure":false,"figureBox":[]}]}`;
 }
 
 async function readPhotoOnce() {
-  const b64 = state.photo.canvas.toDataURL("image/jpeg", 0.85).split(",")[1];
+  const b64 = state.photo.canvas.toDataURL("image/jpeg", 0.8).split(",")[1];
   const out = await askAI([recognizePrompt(), { inlineData: { data: b64, mimeType: "image/jpeg" } }]);
   const probs = Array.isArray(out.problems) ? out.problems.filter((p) => p && p.question) : [];
   const rot = [90, 180, 270].includes(+out.rotate) ? +out.rotate : 0;

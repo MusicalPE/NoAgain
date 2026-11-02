@@ -184,6 +184,11 @@ body.list-mode .year-tabs{display:flex}
 .ytab .yy{font-size:17px;text-combine-upright:all;padding-inline-end:3px}
 .ytab.on{width:42px;background:var(--ink);border-color:var(--ink);color:#fff;opacity:1;box-shadow:2px 3px 0 rgba(0,0,0,.18)}
 
+/* AI 연결 점검 */
+.diag{padding-left:22px;margin:8px 0}
+.diag li{padding:4px 0;border-bottom:1px dashed #e3ddcf}
+.diag .ok{color:var(--green)} .diag .no{color:var(--red)}
+
 /* 함께 쓰기 */
 .people{margin:4px 0 10px;padding-left:20px}
 .people li{padding:2px 0}

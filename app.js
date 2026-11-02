@@ -452,10 +452,9 @@ $("#noteList").addEventListener("click", async (e) => {
   } else if (act === "edit") {
     openEdit(n);
   } else if (act === "similar") {
-    busy(true, "비슷한 문제를 만드는 중");
-    try { const made = await makeSimilar(n, SIMILAR_COUNT); toast(`비슷한 문제 ${made}개를 만들었어요`); renderList(); }
-    catch (err) { toast(aiErrorText(err), 8000); }
-    busy(false);
+    askNotifyOnce();
+    enqueueSimilar([n]);
+    toast("비슷한 문제를 만들기 시작했어요. 다른 화면을 봐도 괜찮아요");
   }
 });
 
@@ -528,6 +527,7 @@ function openSettings() {
       <button class="btn primary" id="sSave">저장</button>
       <button class="btn" id="sOut">로그아웃</button>
       <button class="btn" id="sDiag">AI 연결 점검</button>
+      <button class="btn" id="sNotify">알림 받기</button>
       ${isOwner ? `<button class="btn ghost" id="sNew">새 노트 만들기</button>` : `<button class="btn ghost" id="sLeave">이 노트에서 나가기</button>`}
       <button class="btn ghost" id="sClose">닫기</button>
     </div>`);
@@ -535,6 +535,12 @@ function openSettings() {
   $("#sOut").onclick = async () => { closeModal(); state.notes = []; state.retry = null; state.nb = null; await signOut(auth); };
   $("#sInvite").onclick = () => openInvite();
   $("#sDiag").onclick = () => openDiag();
+  $("#sNotify").onclick = async () => {
+    if (!canNotify()) { toast("이 브라우저는 알림을 띄울 수 없어요. 아이폰은 홈 화면에 추가한 앱에서만 돼요", 6000); return; }
+    if (Notification.permission === "denied") { toast("알림이 막혀 있어요. 휴대폰 설정 > 앱(브라우저) > 알림에서 이 사이트를 허용해 주세요", 7000); return; }
+    const r = Notification.permission === "granted" ? "granted" : await Notification.requestPermission();
+    if (r === "granted") notifyDone("알림이 켜졌어요. 비슷한 문제를 다 만들면 이렇게 알려 드려요");
+  };
   $("#sSave").onclick = async () => {
     const data = { name: $("#sName").value.trim() || nb.name, grade: $("#sGrade").value.trim() };
     try {
@@ -675,11 +681,13 @@ $("#btnRecognize").onclick = async () => {
   if (!state.photo) return;
   const t0 = Date.now();
   let msg = "사진 속 문제를 읽는 중";
-  busy(true, msg + " (10~30초)");
   state.aiNote = "";
-  const tick = setInterval(() => busy(true, `${msg} · ${Math.round((Date.now() - t0) / 1000)}초${state.aiNote || ""}`), 1000);
+  const est = estSec("read");
+  busy(true, `${msg}\n${leftText(est)}`);
+  const tick = setInterval(() => { const el = (Date.now() - t0) / 1000; busy(true, `${msg}${state.aiNote || ""}\n${leftText(est - el)} · ${Math.round(el)}초 지남`); }, 1000);
   try {
     let probs = await readPhotoOnce();
+    if (probs.length) recordSec("read", (Date.now() - t0) / 1000);
     if (!probs.length) {
       // 못 찾으면 사진을 옆으로 돌려 한 번 더
       msg = "사진을 돌려서 한 번 더 읽는 중";
@@ -760,8 +768,9 @@ async function saveRecog() {
   const picks = state.recog.filter((p) => p.keep && p.question);
   if (!picks.length) { toast("저장할 문제를 체크해 주세요"); return; }
   const withSimilar = $("#optSimilar").checked;
+  if (withSimilar) askNotifyOnce();
   busy(true, "저장하는 중");
-  let saved = 0, made = 0, aiFail = null;
+  let saved = 0; const savedNotes = [];
   try {
     for (const p of picks) {
       const note = await addNote({
@@ -770,14 +779,10 @@ async function saveRecog() {
         wrongReason: p.wrongReason || "", explanation: p.explanation || "", figure: p.figure || "", source: "photo",
         status: p.isWrong === false ? "mastered" : "wrong", wrongCount: p.isWrong === false ? 0 : 1
       });
-      saved++;
-      if (withSimilar && !aiFail) {
-        busy(true, `비슷한 문제를 만드는 중 (${saved}/${picks.length})`);
-        try { made += await makeSimilar(note, SIMILAR_COUNT); } catch (e) { aiFail = e; }
-      }
+      saved++; savedNotes.push(note);
     }
-    toast(`${saved}문제를 저장했어요` + (made ? `, 비슷한 문제 ${made}개도 만들었어요` : ""), 3000);
-    if (aiFail) setTimeout(() => toast(aiErrorText(aiFail), 8000), 3100);
+    toast(`${saved}문제를 저장했어요` + (withSimilar ? ". 비슷한 문제는 뒤에서 만들고 있어요" : ""), 3500);
+    if (withSimilar) enqueueSimilar(savedNotes);
     state.photo = null; state.recog = []; $("#photoPreview").classList.add("hidden"); $("#recogResult").innerHTML = "";
     busy(false); show("list");
   } catch (e) { busy(false); toast("저장하지 못했어요: " + (e.code || e.message), 4000); }
@@ -858,6 +863,79 @@ ${n.figureSpec ? "원래 문제의 그림 설계도: " + JSON.stringify(n.figure
     });
   }
   return probs.length;
+}
+
+// ───────── 걸린 시간 기억해서 예상 시간 알려 주기 ─────────
+const EST_DEFAULT = { read: 25, similar: 25 };
+function estSec(kind) { try { return JSON.parse(localStorage.getItem("odapEst") || "{}")[kind] || EST_DEFAULT[kind]; } catch (_) { return EST_DEFAULT[kind]; } }
+function recordSec(kind, sec) {
+  try { const m = JSON.parse(localStorage.getItem("odapEst") || "{}"); m[kind] = Math.round((m[kind] || sec) * 0.6 + sec * 0.4); localStorage.setItem("odapEst", JSON.stringify(m)); } catch (_) {}
+}
+const leftText = (sec) => (sec <= 3 ? "거의 다 됐어요" : sec < 60 ? `약 ${Math.ceil(sec / 5) * 5}초 남음` : `약 ${Math.round(sec / 60)}분 남음`);
+
+// ───────── 뒤에서 비슷한 문제 만들기 (화면을 바꿔도 계속) ─────────
+const jobs = { queue: [], running: false, done: 0, made: 0, total: 0, fails: 0, lastErr: null };
+function enqueueSimilar(notes) {
+  notes.forEach((n) => jobs.queue.push(n));
+  jobs.total += notes.length;
+  renderJobChip();
+  if (!jobs.running) runJobs();
+}
+async function runJobs() {
+  jobs.running = true;
+  const tick = setInterval(renderJobChip, 1000);
+  while (jobs.queue.length) {
+    const n = jobs.queue.shift();
+    jobs.started = Date.now();
+    renderJobChip();
+    try { jobs.made += await makeSimilar(n, SIMILAR_COUNT); recordSec("similar", (Date.now() - jobs.started) / 1000); }
+    catch (e) { jobs.fails++; jobs.lastErr = e; }
+    jobs.done++;
+    renderJobChip();
+    if (state.view === "list") renderList();
+    if (state.view === "print") updatePrintAvail();
+    if (state.view === "retry" && !state.retry) updateRetryAvail();
+  }
+  jobs.running = false;
+  clearInterval(tick);
+  const made = jobs.made, fails = jobs.fails, err = jobs.lastErr;
+  Object.assign(jobs, { done: 0, made: 0, total: 0, fails: 0, lastErr: null });
+  renderJobChip();
+  const msg = made ? `비슷한 문제 ${made}개를 다 만들었어요` : "비슷한 문제를 만들지 못했어요";
+  notifyDone(msg + (fails && made ? ` (${fails}문제는 실패)` : ""));
+  if (fails) setTimeout(() => toast(aiErrorText(err), 8000), 3500);
+}
+function renderJobChip() {
+  const chip = $("#jobChip");
+  if (!jobs.running && !jobs.queue.length) { chip.classList.add("hidden"); return; }
+  const est = estSec("similar"), now = (Date.now() - (jobs.started || Date.now())) / 1000;
+  const left = Math.max(0, est - now) + jobs.queue.length * est;
+  chip.innerHTML = `<span class="mini-spin"></span>비슷한 문제 만드는 중 ${Math.min(jobs.done + 1, jobs.total)}/${jobs.total} · ${leftText(left)}`;
+  chip.classList.remove("hidden");
+}
+window.addEventListener("beforeunload", (e) => { if (jobs.running) { e.preventDefault(); e.returnValue = ""; } });
+
+// 다 만들면 휴대폰 위쪽 알림으로 알려 주기
+let swReg = null;
+if ("serviceWorker" in navigator) {
+  navigator.serviceWorker.register("sw.js").then((r) => (swReg = r)).catch(() => {});
+  navigator.serviceWorker.addEventListener("message", (e) => { if (e.data && e.data.type === "openList" && state.user) show("list"); });
+}
+const canNotify = () => "Notification" in window && "serviceWorker" in navigator;
+function askNotifyOnce() {
+  try {
+    if (!canNotify() || Notification.permission !== "default" || localStorage.getItem("odapAskedNotify")) return;
+    localStorage.setItem("odapAskedNotify", "1");
+    Notification.requestPermission().catch(() => {});
+  } catch (_) {}
+}
+async function notifyDone(text) {
+  toast(text, 3500);
+  try {
+    if (!canNotify() || Notification.permission !== "granted") return;
+    const reg = swReg || (await navigator.serviceWorker.ready);
+    await reg.showNotification(NAME, { body: text, icon: "icon-192.png", badge: "favicon.png", tag: "similar-done", renotify: true });
+  } catch (_) {}
 }
 
 // ───────── 다시 풀기 ─────────

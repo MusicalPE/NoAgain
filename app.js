@@ -469,7 +469,7 @@ function noteCard(n) {
     ${parent ? `<p class="muted small">원래 문제: ${esc(parent.question.slice(0, 40))}…</p>` : ""}
     <div class="note-actions">
       <button class="btn sm" data-act="similar">비슷한 문제 ${SIMILAR_COUNT}개 더</button>
-      ${n.answerFromAI && !practice ? `<button class="btn sm" data-act="resolve">AI 다시 풀기</button>` : ""}
+      ${!practice ? `<button class="btn sm" data-act="resolve">AI 다시 풀기</button>` : ""}
       <button class="btn sm" data-act="toggle">${n.status === "mastered" ? "다시 틀림으로" : "익힘으로"}</button>
       <button class="btn sm" data-act="edit">고치기</button>
       <button class="btn sm ghost" data-act="del">지우기</button>
@@ -579,15 +579,8 @@ $("#noteList").addEventListener("click", async (e) => {
     state.keepShown.add(id);
     renderList(); toast("맞은 답으로 고쳤어요");
   } else if (act === "resolve") {
-    const est = estSec("resolve");
-    const t0 = Date.now(), tick = setInterval(() => busy(true, `AI가 꼼꼼히 다시 푸는 중\n${leftText(est - (Date.now() - t0) / 1000)}`), 1000);
-    busy(true, `AI가 꼼꼼히 다시 푸는 중\n${leftText(est)}`);
-    try {
-      const r = await resolveNote(n);
-      recordSec("resolve", (Date.now() - t0) / 1000);
-      toast(r, 4500); renderList();
-    } catch (err) { logErr("다시 풀기", err); toast(aiErrorText(err), 8000); }
-    clearInterval(tick); busy(false);
+    const r = await withResolveBusy(() => resolveNote(n));
+    if (r) { toast(r, 4500); renderList(); }
   } else if (act === "similar") {
     askNotifyOnce();
     enqueueSimilar([n]);
@@ -877,6 +870,7 @@ function renderRecog() {
       <div class="row" style="margin-top:6px">
         <button class="btn sm" data-crop>${p.figure ? "그림 다시 자르기" : "그림 잘라 넣기"}</button>
         ${p.figure ? `<button class="btn sm ghost" data-nofig>그림 빼기</button>` : ""}
+        <button class="btn sm" data-resolve>AI 다시 풀기</button>
       </div>
     </div>`).join("") +
     `<div class="save-bar">
@@ -899,6 +893,16 @@ $("#recogResult").addEventListener("click", async (e) => {
   if (card) {
     const i = +card.dataset.i, p = state.recog[i];
     if (e.target.matches("[data-nofig]")) { syncRecog(); p.figure = ""; renderRecog(); return; }
+    if (e.target.matches("[data-resolve]")) {
+      syncRecog();
+      const r = await withResolveBusy(() => solveAgain(p));
+      if (r) {
+        Object.assign(p, { correctAnswer: r.ans, explanation: r.explanation, wrongReason: r.wrongReason, answerFromAI: true });
+        if (p.myAnswer) { p.isWrong = !r.okKid; p.keep = !r.okKid || p.keep; }
+        renderRecog(); toast(r.msg, 4500);
+      }
+      return;
+    }
     if (e.target.matches("[data-crop]")) {
       syncRecog();
       const box = await cropEditor(state.photo.canvas, p.figureBox);
@@ -963,7 +967,7 @@ function cropEditor(canvas, initBox) {
 
 // ───────── 비슷한 문제 만들기 ─────────
 // 정답·풀이가 이상할 때: 더 꼼꼼한 모델이 시간을 들여 다시 풀기
-async function resolveNote(n) {
+async function solveAgain(n) {
   const prompt = `너는 초등학교 선생님이다. 아래 문제를 처음부터 아주 꼼꼼히 다시 푼다. 앞서 누가 쓴 답은 틀렸을 수 있으니 믿지 않는다.
 학생 학년: ${grade() || "모름"}
 - 그림이 있으면 그림을 먼저 정확히 읽는다. 수직선은 큰 눈금 사이가 몇 칸인지, 화살표가 몇 번째 눈금인지 센다.
@@ -987,11 +991,24 @@ ${n.figureSpec ? "그림 설계도: " + (typeof n.figureSpec === "string" ? n.fi
   const ans = fixMath(String(out.correctAnswer));
   const okKid = !!n.myAnswer && (out.studentCorrect === true || judgeAnswer({ correctAnswer: ans }, { cands: [n.myAnswer] }));
   const changed = normAnswer(ans) !== normAnswer(n.correctAnswer);
+  const msg = (changed ? `정답을 ${ans.replace(/\$/g, "")}(으)로 고쳤어요` : "정답은 그대로예요. 풀이를 새로 썼어요") + (n.myAnswer ? (okKid ? ". 아이 답이 맞아요" : ". 아이 답은 다시 봐야 해요") : "");
+  return { ans, okKid, msg, explanation: String(out.explanation || ""), wrongReason: okKid ? "" : String(out.wrongReason || n.wrongReason || "") };
+}
+async function resolveNote(n) {
+  const { ans, okKid, msg, explanation, wrongReason } = await solveAgain(n);
   await patchNote(n.id, {
-    correctAnswer: ans, explanation: String(out.explanation || ""), answerFromAI: true,
-    wrongReason: okKid ? "" : String(out.wrongReason || n.wrongReason || ""), myAnswerOk: okKid
+    correctAnswer: ans, explanation, answerFromAI: true, wrongReason, myAnswerOk: okKid
   });
-  return (changed ? `정답을 ${ans.replace(/\$/g, "")}(으)로 고쳤어요` : "정답은 그대로예요. 풀이를 새로 썼어요") + (n.myAnswer ? (okKid ? ". 아이 답이 맞아요" : ". 아이 답은 다시 봐야 해요") : "");
+  return msg;
+}
+// AI 다시 풀기를 기다리는 동안 남은 시간 보여 주기
+async function withResolveBusy(fn) {
+  const est = estSec("resolve"), t0 = Date.now();
+  busy(true, `AI가 꼼꼼히 다시 푸는 중\n${leftText(est)}`);
+  const tick = setInterval(() => busy(true, `AI가 꼼꼼히 다시 푸는 중\n${leftText(est - (Date.now() - t0) / 1000)}`), 1000);
+  try { const r = await fn(); recordSec("resolve", (Date.now() - t0) / 1000); return r; }
+  catch (err) { logErr("다시 풀기", err); toast(aiErrorText(err), 8000); return null; }
+  finally { clearInterval(tick); busy(false); }
 }
 
 async function makeSimilar(n, count) {

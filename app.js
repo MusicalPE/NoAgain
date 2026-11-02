@@ -808,7 +808,9 @@ function recognizePrompt() {
 9. subject 는 다음 중 하나: ${SUBJECTS.join(", ")}
 
 아래 JSON 하나만 출력한다.
-{"rotate":0,"problems":[{"number":"문제 번호","subject":"과목","unit":"단원(짐작)","type":"문제 유형(짧게)","question":"문제 글","choices":[],"myAnswer":"학생이 쓴 답, 없으면 빈 문자열","correctAnswer":"정답","answerFromAI":false,"isWrong":true,"graded":true,"wrongReason":"","explanation":"","hasFigure":false,"figureBox":[]}]}`;
+항목은 적힌 순서대로 쓴다. explanation(풀이)을 먼저 끝까지 쓰고, 그 풀이의 마지막 답을 글자 그대로 correctAnswer 에 옮긴다.
+그다음 학생 답(myAnswer)과 correctAnswer 를 비교해 isWrong 을 정하고, 틀렸으면 wrongReason 을 쓴다.
+{"rotate":0,"problems":[{"number":"문제 번호","subject":"과목","unit":"단원(짐작)","type":"문제 유형(짧게)","question":"문제 글","choices":[],"hasFigure":false,"figureBox":[],"myAnswer":"학생이 쓴 답, 없으면 빈 문자열","graded":true,"explanation":"단계별 풀이","correctAnswer":"풀이 마지막 답","answerFromAI":false,"isWrong":true,"wrongReason":""}]}`;
 }
 
 async function readPhotoOnce() {
@@ -975,7 +977,9 @@ ${n.figureSpec ? "그림 설계도: " + (typeof n.figureSpec === "string" ? n.fi
 학생 답: ${n.myAnswer || "없음"}
 
 아래 JSON 하나만 출력한다.
-{"correctAnswer":"","explanation":"","studentCorrect":false,"wrongReason":""}`;
+항목은 적힌 순서대로 쓴다. explanation(풀이)을 먼저 끝까지 쓰고, 그 풀이의 마지막 답을 글자 그대로 correctAnswer 에 옮긴다.
+그다음 학생 답과 correctAnswer 를 비교해 studentCorrect 를 정한다.
+{"explanation":"단계별 풀이","correctAnswer":"풀이 마지막 답","studentCorrect":false,"wrongReason":""}`;
   const parts = [prompt];
   if (n.figure && /^data:image\/jpeg;base64,/.test(n.figure)) parts.push({ inlineData: { data: n.figure.split(",")[1], mimeType: "image/jpeg" } });
   const out = await askAI(parts, 0.1, null, AI_MODELS, { think: 8192, timeout: 120000 });
@@ -1027,7 +1031,8 @@ async function makeSimilar(n, count) {
 ${n.figureSpec ? "원래 문제의 그림 설계도: " + (typeof n.figureSpec === "string" ? n.figureSpec : JSON.stringify(n.figureSpec)) : n.figure ? "(원래 문제에는 함께 보낸 그림이 있다)" : ""}
 
 아래 JSON 하나만 출력한다.
-{"problems":[{"question":"","figure":null,"choices":[],"correctAnswer":"","explanation":""}]}`;
+항목은 적힌 순서대로 쓴다. explanation(풀이)을 먼저 끝까지 쓰고, 그 풀이의 마지막 답을 글자 그대로 correctAnswer 에 옮긴다.
+{"problems":[{"question":"","figure":null,"choices":[],"explanation":"단계별 풀이","correctAnswer":"풀이 마지막 답"}]}`;
   const parts = [prompt];
   if (n.figure && /^data:image\/jpeg;base64,/.test(n.figure)) parts.push({ inlineData: { data: n.figure.split(",")[1], mimeType: "image/jpeg" } });
   const out = await askAI(parts, 0.7, null, AI_MODELS, { think: 4096, timeout: 90000 });

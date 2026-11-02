@@ -200,8 +200,14 @@ body.list-mode .year-tabs{display:flex}
 .ans-box [data-swap]{display:inline-block;margin-top:2px}
 
 /* 뒤에서 만드는 중 표시 */
-.job-chip{position:fixed;left:50%;top:58px;transform:translateX(-50%);z-index:45;background:var(--paper2);border:1.5px solid var(--ink);
-  border-radius:var(--wobble);padding:4px 14px;font-size:16px;font-weight:700;display:flex;align-items:center;gap:8px;box-shadow:2px 3px 0 rgba(0,0,0,.12);white-space:nowrap}
+.job-chip{position:fixed;left:50%;top:58px;transform:translateX(-50%);z-index:45;display:flex;flex-direction:column;gap:4px;align-items:center}
+.chip-line{background:var(--paper2);border:1.5px solid var(--ink);border-radius:var(--wobble);padding:4px 14px;font-size:16px;font-weight:700;
+  display:flex;align-items:center;gap:8px;box-shadow:2px 3px 0 rgba(0,0,0,.12);white-space:nowrap;cursor:pointer}
+.reading-card{display:flex;align-items:center;gap:12px}
+.reading-card .mini-spin{width:22px;height:22px;flex:0 0 auto}
+.file-btn.disabled{opacity:.45;pointer-events:none}
+.tabs button.dot{position:relative}
+.tabs button.dot::after{content:"";position:absolute;top:6px;left:calc(50% + 10px);width:10px;height:10px;border-radius:50%;background:var(--red)}
 .mini-spin{width:14px;height:14px;border:2.5px dashed var(--red);border-radius:50%;animation:spin 1.6s linear infinite}
 
 /* AI 연결 점검 */

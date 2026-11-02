@@ -346,6 +346,7 @@ function show(view) {
   document.querySelectorAll(".view").forEach((v) => v.classList.add("hidden"));
   $("#view-" + view).classList.remove("hidden");
   document.body.classList.toggle("list-mode", view === "list");
+  if (view === "capture") $('#tabs [data-view="capture"]').classList.remove("dot");
   state.keepShown.clear();
   document.querySelectorAll("#tabs button").forEach((b) => b.classList.toggle("on", b.dataset.view === view));
   if (view === "list") renderList();
@@ -819,20 +820,29 @@ async function readPhotoOnce() {
   }
   return probs;
 }
+// 사진 읽기도 뒤에서: 읽는 동안 다른 화면을 봐도 된다
+function setReadingUI(on) {
+  ["#btnRecognize", "#btnRotL", "#btnRotR", "#btnClearPhoto"].forEach((s) => ($(s).disabled = on));
+  document.querySelectorAll("#inCamera, #inGallery").forEach((i) => (i.disabled = on));
+  document.querySelectorAll(".capture-btns .file-btn").forEach((b) => b.classList.toggle("disabled", on));
+  if (on) $("#recogResult").innerHTML = `<div class="card reading-card"><span class="mini-spin"></span>
+    <div><b>사진 속 문제를 읽고 있어요</b><br><span class="muted small">다 읽으면 알려 드릴게요. 그동안 다른 화면을 봐도 괜찮아요.</span></div></div>`;
+}
 $("#btnRecognize").onclick = async () => {
-  if (!state.photo) return;
+  if (!state.photo || state.reading) return;
+  askNotifyOnce();
   const t0 = Date.now();
-  let msg = "사진 속 문제를 읽는 중";
+  state.reading = { t0, est: estSec("read"), msg: "사진 읽는 중" };
   state.aiNote = "";
-  const est = estSec("read");
-  busy(true, `${msg}\n${leftText(est)}`);
-  const tick = setInterval(() => { const el = (Date.now() - t0) / 1000; busy(true, `${msg}${state.aiNote || ""}\n${leftText(est - el)} · ${Math.round(el)}초 지남`); }, 1000);
+  setReadingUI(true); renderJobChip();
+  const tick = setInterval(renderJobChip, 1000);
+  let found = -1;
   try {
     let probs = await readPhotoOnce();
     if (probs.length) recordSec("read", (Date.now() - t0) / 1000);
     if (!probs.length) {
       // 못 찾으면 사진을 옆으로 돌려 한 번 더
-      msg = "사진을 돌려서 한 번 더 읽는 중";
+      state.reading.msg = "사진을 돌려서 한 번 더 읽는 중"; state.reading.t0 = Date.now();
       state.photo.canvas = rotateCanvas(state.photo.canvas, 90); showPhoto();
       probs = await readPhotoOnce();
       if (!probs.length) { state.photo.canvas = rotateCanvas(state.photo.canvas, 270); showPhoto(); }
@@ -844,13 +854,19 @@ $("#btnRecognize").onclick = async () => {
       figure: p.hasFigure ? cropToDataURL(state.photo.canvas, p.figureBox) : "",
       keep: p.isWrong !== false
     }));
-    renderRecog();
-    if (!probs.length) $("#recogResult").innerHTML = `<div class="card"><h3>문제를 찾지 못했어요</h3>
-      <p class="muted">위의 돌리기 단추로 글자가 바로 서게 맞춘 뒤 다시 눌러 보세요.<br>
-      그래도 안 되면 문제 2~3개만 나오게 가까이, 밝은 곳에서, 그림자 없이 찍어 주세요.</p></div>`;
+    found = probs.length;
   } catch (e) { logErr("사진 읽기", e); toast(aiErrorText(e), 8000); }
   clearInterval(tick);
-  busy(false);
+  state.reading = null; setReadingUI(false); renderJobChip();
+  renderRecog();
+  if (found === 0) $("#recogResult").innerHTML = `<div class="card"><h3>문제를 찾지 못했어요</h3>
+      <p class="muted">위의 돌리기 단추로 글자가 바로 서게 맞춘 뒤 다시 눌러 보세요.<br>
+      그래도 안 되면 문제 2~3개만 나오게 가까이, 밝은 곳에서, 그림자 없이 찍어 주세요.</p></div>`;
+  if (found > 0) {
+    if (state.view !== "capture") { $('#tabs [data-view="capture"]').classList.add("dot"); }
+    if (state.view !== "capture" || document.visibilityState !== "visible") notifyDone(`문제 ${found}개를 다 읽었어요. "찍기"에서 확인해 주세요`);
+    else toast(`문제 ${found}개를 다 읽었어요`);
+  } else if (found === 0 && state.view !== "capture") notifyDone("사진에서 문제를 찾지 못했어요. \"찍기\"에서 다시 해 주세요");
 };
 
 function renderRecog() {
@@ -1141,14 +1157,21 @@ async function runJobs() {
   if (fails) setTimeout(() => toast(aiErrorText(err), 8000), 3500);
 }
 function renderJobChip() {
-  const chip = $("#jobChip");
-  if (!jobs.running && !jobs.queue.length) { chip.classList.add("hidden"); return; }
-  const est = estSec("similar"), now = (Date.now() - (jobs.started || Date.now())) / 1000;
-  const left = Math.max(0, est - now) + jobs.queue.length * est;
-  chip.innerHTML = `<span class="mini-spin"></span>비슷한 문제 만드는 중 ${Math.min(jobs.done + 1, jobs.total)}/${jobs.total} · ${leftText(left)}`;
-  chip.classList.remove("hidden");
+  const chip = $("#jobChip"), lines = [];
+  if (state.reading) {
+    const r = state.reading, el = (Date.now() - r.t0) / 1000;
+    lines.push(`<button type="button" class="chip-line" data-go="capture"><span class="mini-spin"></span>${r.msg}${state.aiNote || ""} · ${leftText(r.est - el)}</button>`);
+  }
+  if (jobs.running || jobs.queue.length) {
+    const est = estSec("similar"), now = (Date.now() - (jobs.started || Date.now())) / 1000;
+    const left = Math.max(0, est - now) + jobs.queue.length * est;
+    lines.push(`<button type="button" class="chip-line" data-go="list"><span class="mini-spin"></span>비슷한 문제 만드는 중 ${Math.min(jobs.done + 1, jobs.total)}/${jobs.total} · ${leftText(left)}</button>`);
+  }
+  chip.classList.toggle("hidden", !lines.length);
+  chip.innerHTML = lines.join("");
 }
-window.addEventListener("beforeunload", (e) => { if (jobs.running) { e.preventDefault(); e.returnValue = ""; } });
+$("#jobChip").addEventListener("click", (e) => { const b = e.target.closest("[data-go]"); if (b && state.user) show(b.dataset.go); });
+window.addEventListener("beforeunload", (e) => { if (jobs.running || state.reading) { e.preventDefault(); e.returnValue = ""; } });
 
 // 다 만들면 휴대폰 위쪽 알림으로 알려 주기
 let swReg = null;

@@ -1,4 +1,4 @@
-/* 주또싫 — 줄 노트 느낌 */
+/* 또싫 — 줄 노트 느낌 */
 :root{
   --paper:#fcf7ec; --paper2:#fffdf8; --rule:#dfe3e8; --margin:#d9dee6;
   --ink:#2b3445; --pencil:#5b6474; --muted:#8a8f99;
@@ -223,6 +223,11 @@ details.orig summary{cursor:pointer;color:var(--blue)}
 .tabs button.dot{position:relative}
 .tabs button.dot::after{content:"";position:absolute;top:6px;left:calc(50% + 10px);width:10px;height:10px;border-radius:50%;background:var(--red)}
 .mini-spin{width:14px;height:14px;border:2.5px dashed var(--red);border-radius:50%;animation:spin 1.6s linear infinite}
+
+/* 개인정보 안내·설치 안내 */
+.privacy p{margin:0 0 10px;font-size:17px;line-height:1.5}
+.ios-steps{padding-left:22px;font-size:18px}
+.ios-steps li{margin:4px 0}
 
 /* AI 연결 점검 */
 .diag{padding-left:22px;margin:8px 0}

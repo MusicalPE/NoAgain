@@ -1,6 +1,6 @@
 {
-  "name": "주또싫 - 주원이는 또 틀리기 싫어요",
-  "short_name": "주또싫",
+  "name": "또싫 - 또 틀리기 싫어요",
+  "short_name": "또싫",
   "start_url": "./",
   "display": "standalone",
   "background_color": "#fcf7ec",

@@ -1,4 +1,4 @@
-// 주또싫 서비스 워커 — 알림 띄우기·알림 누르면 앱 열기 (파일 저장은 하지 않음)
+// 또싫 서비스 워커 — 알림 띄우기·알림 누르면 앱 열기 (파일 저장은 하지 않음)
 self.addEventListener("install", () => self.skipWaiting());
 self.addEventListener("activate", (e) => e.waitUntil(self.clients.claim()));
 self.addEventListener("notificationclick", (e) => {

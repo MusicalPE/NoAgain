@@ -1,4 +1,4 @@
-// 주또싫 (오답노트) — 음악적체육인
+// 또싫 (오답노트) — 음악적체육인
 import { FIREBASE_CONFIG, RECAPTCHA_SITE_KEY, AI_MODELS, AI_MODELS_FAST, SUBJECTS, SIMILAR_COUNT, APP_NAME, APP_SUBTITLE, SUBJECT_COLORS } from "./config.js";
 import { initializeApp } from "https://www.gstatic.com/firebasejs/12.18.0/firebase-app.js";
 import { initializeAppCheck, ReCaptchaEnterpriseProvider, getToken as getAppCheckToken } from "https://www.gstatic.com/firebasejs/12.18.0/firebase-app-check.js";
@@ -40,10 +40,23 @@ const shuffle = (a) => { a = a.slice(); for (let i = a.length - 1; i > 0; i--) {
 const fmtDate = (t) => { const d = new Date(t); return `${d.getMonth() + 1}.${d.getDate()}`; };
 
 // 앱 이름 표시
-const NAME = APP_NAME || "오답노트", SUB = APP_SUBTITLE || "";
-document.title = NAME;
-["#brandName", "#loginTitle"].forEach((s) => ($(s).textContent = NAME));
-["#brandSub", "#loginSub"].forEach((s) => ($(s).textContent = SUB));
+// 기본 이름은 config.js, 노트마다 아이 이름을 정하면 "○○이는 또 틀리기 싫어요"
+const DEF_NAME = APP_NAME || "또싫", DEF_SUB = APP_SUBTITLE || "또 틀리기 싫어요";
+let NAME = DEF_NAME, SUB = DEF_SUB;
+// 받침 있으면 "이는", 없으면 "는"
+const josaNeun = (w) => { const c = (w || "").charCodeAt(w.length - 1) - 0xac00; return c >= 0 && c <= 11171 && c % 28 ? "이는" : "는"; };
+function brandFor(nb) {
+  const kid = nb && nb.kid ? String(nb.kid).trim() : "";
+  return kid ? { name: kid.slice(0, 1) + "또싫", sub: `${kid}${josaNeun(kid)} 또 틀리기 싫어요` } : { name: DEF_NAME, sub: DEF_SUB };
+}
+function applyBrand(b) {
+  NAME = b.name; SUB = b.sub; document.title = NAME;
+  ["#brandName", "#loginTitle"].forEach((s) => ($(s).textContent = NAME));
+  ["#brandSub", "#loginSub"].forEach((s) => ($(s).textContent = SUB));
+  try { localStorage.setItem("odapBrand", JSON.stringify(b)); } catch (_) {}
+}
+// 로그인 전에는 이 기기에서 마지막으로 본 이름
+try { const b = JSON.parse(localStorage.getItem("odapBrand") || "null"); applyBrand(b && b.name ? b : { name: DEF_NAME, sub: DEF_SUB }); } catch (_) { applyBrand({ name: DEF_NAME, sub: DEF_SUB }); }
 
 // 답 비교용 정리: 띄어쓰기·마침표·수식 기호를 빼고, ①을 1로
 export function normAnswer(s) {
@@ -261,6 +274,7 @@ async function listNotebooks() {
 }
 async function useNotebook(id) {
   state.nb = state.notebooks.find((n) => n.id === id) || state.notebooks[0];
+  applyBrand(brandFor(state.nb));
   try { await setDoc(doc(db, "users", state.user.uid), { currentNb: state.nb.id }, { merge: true }); } catch (_) {}
 }
 async function createNotebook(name, gradeText = "") {
@@ -284,12 +298,29 @@ async function setupNotebook() {
   let user = {};
   try { const u = await getDoc(doc(db, "users", uid)); if (u.exists()) user = u.data(); } catch (_) {}
   if (!state.notebooks.length) {
-    const id = await createNotebook(`${NAME} 노트`, user.grade || "");
+    const id = await createNotebook("우리 집 오답노트", user.grade || "");
     await migrateOldNotes(id);
     await listNotebooks();
   }
   await useNotebook(joined || (state.notebooks.some((n) => n.id === user.currentNb) ? user.currentNb : state.notebooks[0].id));
   if (joined) setTimeout(() => toast(`"${state.nb.name}"에 함께하게 됐어요`, 3500), 300);
+  // 노트를 만든 사람에게 아이 이름을 한 번 물어보기
+  if (state.nb.owner === uid && !state.nb.kid && !state.nb.kidAsked) setTimeout(askKidName, 600);
+}
+function askKidName() {
+  openModal(`<h2>아이 이름을 알려 주세요</h2>
+    <p class="muted">앱 위쪽과 시험지에 "○○이는 또 틀리기 싫어요"로 나와요. 이 노트를 함께 쓰는 가족에게만 보여요.</p>
+    <div class="edit"><label>아이 이름<input id="kName" placeholder="예: 지민" maxlength="10"></label></div>
+    <div class="row" style="margin-top:12px"><button class="btn primary" id="kOk">정하기</button><button class="btn ghost" id="kSkip">나중에</button></div>`);
+  const save = async (kid) => {
+    const data = kid ? { kid, kidAsked: true } : { kidAsked: true };
+    try { await updateDoc(nbRef(state.nb.id), data); Object.assign(state.nb, data); } catch (_) {}
+    applyBrand(brandFor(state.nb)); closeModal();
+    if (kid) toast(`"${NAME}"(으)로 정했어요. 설정에서 바꿀 수 있어요`);
+  };
+  $("#kOk").onclick = () => save($("#kName").value.trim());
+  $("#kSkip").onclick = () => save("");
+  $("#kName").focus();
 }
 // 예전(혼자 쓰던) 저장 위치에 있던 문제를 새 노트로 옮기기
 async function migrateOldNotes(nbId) {
@@ -668,6 +699,7 @@ function openSettings() {
   openModal(`<h2>설정</h2>
     <div class="edit">
       <label>노트 이름<input id="sName" value="${esc(nb.name)}"></label>
+      <label>아이 이름 (앱 위쪽에 "○○이는 또 틀리기 싫어요"로 나와요)<input id="sKid" maxlength="10" placeholder="예: 지민" value="${esc(nb.kid || "")}"></label>
       <label>학년 (AI가 눈높이를 맞추는 데 써요)<input id="sGrade" placeholder="예: 초등 4학년, 중학교 2학년" value="${esc(nb.grade || "")}"></label>
       ${others}
     </div>
@@ -681,13 +713,16 @@ function openSettings() {
       <button class="btn" id="sOut">로그아웃</button>
       <button class="btn" id="sDiag">AI 연결 점검</button>
       <button class="btn" id="sNotify">알림 받기</button>
-      ${isOwner ? `<button class="btn ghost" id="sNew">새 노트 만들기</button>` : `<button class="btn ghost" id="sLeave">이 노트에서 나가기</button>`}
+      <button class="btn" id="sPrivacy">개인정보 안내</button>
+      ${isOwner ? `<button class="btn ghost" id="sNew">새 노트 만들기</button><button class="btn ghost" id="sDelete">이 노트 지우기</button>` : `<button class="btn ghost" id="sLeave">이 노트에서 나가기</button>`}
       <button class="btn ghost" id="sClose">닫기</button>
     </div>`);
   $("#sClose").onclick = closeModal;
   $("#sOut").onclick = async () => { closeModal(); state.notes = []; state.retry = null; state.nb = null; await signOut(auth); };
   $("#sInvite").onclick = () => openInvite();
   $("#sDiag").onclick = () => openDiag();
+  $("#sPrivacy").onclick = () => openPrivacy(true);
+  if ($("#sDelete")) $("#sDelete").onclick = () => deleteNotebook(nb);
   $("#sNotify").onclick = async () => {
     if (!canNotify()) { toast("이 브라우저는 알림을 띄울 수 없어요. 아이폰은 홈 화면에 추가한 앱에서만 돼요", 6000); return; }
     if (Notification.permission === "denied") { toast("알림이 막혀 있어요. 휴대폰 설정 > 앱(브라우저) > 알림에서 이 사이트를 허용해 주세요", 7000); return; }
@@ -695,9 +730,9 @@ function openSettings() {
     if (r === "granted") notifyDone("알림이 켜졌어요. 비슷한 문제를 다 만들면 이렇게 알려 드려요");
   };
   $("#sSave").onclick = async () => {
-    const data = { name: $("#sName").value.trim() || nb.name, grade: $("#sGrade").value.trim() };
+    const data = { name: $("#sName").value.trim() || nb.name, grade: $("#sGrade").value.trim(), kid: $("#sKid").value.trim(), kidAsked: true };
     try {
-      await updateDoc(nbRef(nb.id), data); Object.assign(nb, data);
+      await updateDoc(nbRef(nb.id), data); Object.assign(nb, data); applyBrand(brandFor(nb));
       const sw = $("#sSwitch");
       if (sw && sw.value !== nb.id) { await useNotebook(sw.value); state.retry = null; closeModal(); await loadNotes(); show("list"); toast(`"${state.nb.name}"로 바꿨어요`); return; }
       toast("저장했어요"); closeModal();
@@ -724,6 +759,62 @@ function openSettings() {
     } catch (e) { toast("만들지 못했어요: " + (e.code || e.message)); }
   };
 }
+
+// 개인정보 안내
+function openPrivacy(fromSettings) {
+  openModal(`<h2>개인정보 안내</h2>
+    <div class="privacy">
+      <p><b>무엇을 저장하나요</b><br>구글 계정의 이름·이메일, 노트 이름·아이 이름·학년, 사진에서 읽어 낸 문제 글과 잘라 낸 그림, 아이가 쓴 답과 푼 기록.
+      문제지 사진 원본은 저장하지 않아요.</p>
+      <p><b>누가 볼 수 있나요</b><br>노트를 만든 사람과 QR로 초대받은 가족만 볼 수 있어요. 다른 집 노트는 서로 보이지 않아요.
+      다만 이 앱을 운영하는 사람(만든 이)은 관리 화면에서 저장된 내용에 접근할 수 있는 구조예요. 필요할 때 말고는 열어 보지 않아요.</p>
+      <p><b>AI는 어떻게 쓰나요</b><br>문제 읽기·비슷한 문제 만들기·다시 풀기를 할 때 사진과 문제 글이 구글 Gemini(AI)로 보내져 처리돼요.</p>
+      <p><b>어디에 저장되나요</b><br>구글 파이어베이스(서울 지역)에 저장돼요.</p>
+      <p><b>지우고 싶으면</b><br>[설정] > [이 노트 지우기]를 누르면 노트와 그 안의 문제가 모두 지워져요. 초대받은 가족은 [이 노트에서 나가기]를 누르면 돼요.</p>
+      <p class="muted small">문의: 앱을 알려 준 사람에게 연락해 주세요. — 만든 사람: 음악적체육인</p>
+    </div>
+    <div class="row" style="margin-top:10px"><button class="btn" id="pvBack">${fromSettings ? "돌아가기" : "닫기"}</button></div>`);
+  $("#pvBack").onclick = () => (fromSettings ? openSettings() : closeModal());
+}
+$("#btnPrivacy").onclick = () => openPrivacy(false);
+
+// 노트 지우기 (만든 사람만): 문제를 모두 지운 뒤 노트도 지움
+async function deleteNotebook(nb) {
+  const word = "지우기";
+  const typed = prompt(`"${nb.name}"와 그 안의 문제 ${state.notes.length}개가 모두 지워지고 되돌릴 수 없어요.\n정말 지우려면 "${word}"라고 써 주세요.`);
+  if (typed !== word) { if (typed !== null) toast("글자가 맞지 않아 지우지 않았어요"); return; }
+  closeModal(); busy(true, "노트를 지우는 중");
+  try {
+    const snap = await getDocs(collection(db, "notebooks", nb.id, "notes"));
+    let batch = writeBatch(db), n = 0;
+    for (const d of snap.docs) { batch.delete(d.ref); if (++n % 400 === 0) { await batch.commit(); batch = writeBatch(db); } }
+    await batch.commit();
+    await deleteDoc(nbRef(nb.id));
+    state.notes = []; state.retry = null; state.nb = null;
+    await setupNotebook(); await loadNotes(); busy(false); show("list"); toast("노트를 지웠어요. 새 노트를 만들었어요");
+  } catch (e) { busy(false); toast("지우지 못했어요: " + (e.code || e.message), 5000); }
+}
+
+// 앱 설치 단추: 안드로이드(크롬)는 한 번에 설치, 아이폰은 방법 안내
+let installEvt = null;
+const isStandalone = () => matchMedia("(display-mode: standalone)").matches || navigator.standalone === true;
+const isIOS = () => /iphone|ipad|ipod/i.test(navigator.userAgent) || (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1);
+function refreshInstallBtns() {
+  const show = !isStandalone() && (installEvt || isIOS());
+  document.querySelectorAll(".btn-install").forEach((b) => b.classList.toggle("hidden", !show));
+}
+window.addEventListener("beforeinstallprompt", (e) => { e.preventDefault(); installEvt = e; refreshInstallBtns(); });
+window.addEventListener("appinstalled", () => { installEvt = null; refreshInstallBtns(); toast("홈 화면에 앱을 깔았어요"); });
+document.querySelectorAll(".btn-install").forEach((b) => (b.onclick = async () => {
+  if (installEvt) { installEvt.prompt(); const r = await installEvt.userChoice.catch(() => null); if (r && r.outcome === "accepted") installEvt = null; refreshInstallBtns(); return; }
+  openModal(`<h2>홈 화면에 앱 깔기</h2>
+    <ol class="ios-steps"><li>사파리 아래쪽(아이패드는 위쪽)의 <b>공유</b> 단추(네모에서 화살표가 나오는 모양)를 누르세요.</li>
+    <li>목록을 내려서 <b>홈 화면에 추가</b>를 누르세요.</li><li>오른쪽 위 <b>추가</b>를 누르면 끝이에요.</li></ol>
+    <p class="muted small">사파리가 아닌 다른 앱(카톡 안 브라우저 등)에서 열었으면, 먼저 사파리로 열어 주세요.</p>
+    <div class="row"><button class="btn" id="iosClose">닫기</button></div>`);
+  $("#iosClose").onclick = closeModal;
+}));
+refreshInstallBtns();
 
 // AI 연결 점검: 어디서 멈추는지 단계별로 보여 주기
 async function openDiag() {

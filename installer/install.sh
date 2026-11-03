@@ -199,10 +199,14 @@ s = re.sub(r'export const APP_NAME = "[^"]*";', f"export const APP_NAME = {json.
 s = re.sub(r'export const APP_SUBTITLE = "[^"]*";', f"export const APP_SUBTITLE = {json.dumps(sub, ensure_ascii=False)};", s)
 open(p, "w", encoding="utf-8").write(s)
 # 화면·홈 화면 이름 바꾸기 (원본 판의 이름이 남지 않게)
-for f in ["index.html", "manifest.webmanifest", "app.js", "style.css", "sw.js"]:
+for f in ["index.html", "app.js", "style.css", "sw.js"]:
     p = os.path.join(site, f); t = open(p, encoding="utf-8").read()
     t = t.replace("주원이는 또 틀리기 싫어요", sub).replace("주또싫", name)
+    t = t.replace("<title>또싫</title>", f"<title>{name}</title>")
     open(p, "w", encoding="utf-8").write(t)
+p = os.path.join(site, "manifest.webmanifest"); m = json.load(open(p, encoding="utf-8"))
+m["name"] = f"{name} - {sub}"; m["short_name"] = name
+json.dump(m, open(p, "w", encoding="utf-8"), ensure_ascii=False, indent=2)
 print("ok")
 PY
 

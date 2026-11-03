@@ -6,11 +6,11 @@
 
 ## 처음 설치하기
 
-아래 회색 칸의 오른쪽 위 **복사 단추**를 누른 뒤, 아래쪽 검은 화면(터미널)에 붙여 넣고 Enter 를 누르세요.
-(검은 화면을 한 번 누르고 Ctrl+V, 휴대폰이면 길게 눌러 붙여넣기)
+아래 회색 칸 오른쪽의 **작은 터미널 모양 단추**(Cloud Shell에서 실행)를 누르세요.
+명령이 아래쪽 검은 화면에 저절로 들어가면, 검은 화면을 한 번 누르고 **Enter** 만 누르면 됩니다.
 
 ```bash
-cd "$(find ~ -maxdepth 3 -type d -name NoAgain | head -1)" && bash installer/install.sh
+bash installer/install.sh
 ```
 
 - 처음에 "Cloud Shell 승인" 창이 뜨면 **승인**을 누르세요.
@@ -30,10 +30,10 @@ cd "$(find ~ -maxdepth 3 -type d -name NoAgain | head -1)" && bash installer/ins
 
 ## 새 판으로 바꾸기 (나중에)
 
-설치할 때 쓴 링크를 다시 열고, 아래 한 줄을 붙여 넣으세요. 넣어 둔 문제는 그대로 남아요.
+설치할 때 쓴 링크를 다시 열고, 아래 칸의 터미널 모양 단추를 누른 뒤 Enter 를 누르세요. 넣어 둔 문제는 그대로 남아요.
 
 ```bash
-cd "$(find ~ -maxdepth 3 -type d -name NoAgain | head -1)" && git pull && bash installer/install.sh update
+git pull && bash installer/install.sh update
 ```
 
 ## 안 될 때

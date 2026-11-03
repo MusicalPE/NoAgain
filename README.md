@@ -13,7 +13,7 @@ GitHub Pages(또는 Firebase Hosting) + Firebase(Authentication, Firestore, AI L
 
 ## 내 것으로 설치하기 (구글 계정만 있으면 됨)
 
-[![Cloud Shell에서 열기](https://gstatic.com/cloudssh/images/open-btn.svg)](https://shell.cloud.google.com/cloudshell/editor?cloudshell_git_repo=https://github.com/MusicalPE/NoAgain&cloudshell_tutorial=installer/tutorial.md&show=terminal)
+[![Cloud Shell에서 열기](https://gstatic.com/cloudssh/images/open-btn.svg)](https://shell.cloud.google.com/cloudshell/editor?cloudshell_git_repo=https://github.com/MusicalPE/NoAgain&cloudshell_tutorial=installer/tutorial.md)
 
 위 단추를 누르면 설치 도우미가 열립니다. 자세한 순서는 `installer/선생님께_보내는_설치안내.txt`를 보세요.
 GitHub 로 직접 올리는 방법은 `설치안내.txt`를 보세요.

@@ -224,6 +224,7 @@ details.orig summary{cursor:pointer;color:var(--blue)}
 .tabs button.dot::after{content:"";position:absolute;top:6px;left:calc(50% + 10px);width:10px;height:10px;border-radius:50%;background:var(--red)}
 .mini-spin{width:14px;height:14px;border:2.5px dashed var(--red);border-radius:50%;animation:spin 1.6s linear infinite}
 
+.pick-all{margin:0 0 10px;gap:6px}
 .keypoint{background:#fff6b8;padding:6px 10px;border-radius:4px;transform:rotate(-.4deg)}
 
 /* 개인정보 안내·설치 안내 */

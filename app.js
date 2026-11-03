@@ -882,6 +882,7 @@ async function onPhoto(file) {
   try {
     const img = await loadImage(file);
     state.photo = { canvas: imageToCanvas(img, 1600) };
+    $("#btnUncrop").classList.add("hidden");
     showPhoto();
     $("#photoPreview").classList.remove("hidden");
     $("#recogResult").innerHTML = ""; state.recog = [];
@@ -891,6 +892,28 @@ $("#inCamera").onchange = (e) => { onPhoto(e.target.files[0]); e.target.value = 
 $("#inGallery").onchange = (e) => { onPhoto(e.target.files[0]); e.target.value = ""; };
 $("#btnRotL").onclick = () => { if (!state.photo) return; state.photo.canvas = rotateCanvas(state.photo.canvas, 270); showPhoto(); };
 $("#btnRotR").onclick = () => { if (!state.photo) return; state.photo.canvas = rotateCanvas(state.photo.canvas, 90); showPhoto(); };
+// 한 문제만 골라 읽기: 사진 위에 네모를 그려 그 부분만 남기고 읽기
+function cropCanvas(src, box) {
+  const [y1, x1, y2, x2] = box.map(Number), W = src.width, H = src.height;
+  const sx = Math.round((x1 / 1000) * W), sy = Math.round((y1 / 1000) * H), sw = Math.round(((x2 - x1) / 1000) * W), sh = Math.round(((y2 - y1) / 1000) * H);
+  const c = document.createElement("canvas"); c.width = sw; c.height = sh;
+  c.getContext("2d").drawImage(src, sx, sy, sw, sh, 0, 0, sw, sh);
+  return c;
+}
+$("#btnPickOne").onclick = async () => {
+  if (!state.photo || state.reading) return;
+  const box = await cropEditor(state.photo.canvas, null, "읽을 문제 고르기", "고를 문제 하나를 손가락으로 끌어 네모로 감싸 주세요. 문제 번호부터 답 칸까지 넉넉하게 감싸면 좋아요.", "이 문제 읽기");
+  if (!box) return;
+  state.photo.full = state.photo.full || state.photo.canvas;
+  state.photo.canvas = cropCanvas(state.photo.canvas, box);
+  showPhoto(); $("#btnUncrop").classList.remove("hidden");
+  $("#btnRecognize").click();
+};
+$("#btnUncrop").onclick = () => {
+  if (!state.photo || !state.photo.full) return;
+  state.photo.canvas = state.photo.full; state.photo.full = null; showPhoto();
+  $("#btnUncrop").classList.add("hidden"); $("#recogResult").innerHTML = ""; state.recog = [];
+};
 $("#btnClearPhoto").onclick = () => { state.photo = null; state.recog = []; $("#photoPreview").classList.add("hidden"); $("#recogResult").innerHTML = ""; };
 
 // 틀린 이유·풀이·기억할 점 쓰는 법 (풀이 다듬기에서 씀)
@@ -970,7 +993,7 @@ async function readPhotoOnce() {
 }
 // 사진 읽기도 뒤에서: 읽는 동안 다른 화면을 봐도 된다
 function setReadingUI(on) {
-  ["#btnRecognize", "#btnRotL", "#btnRotR", "#btnClearPhoto"].forEach((s) => ($(s).disabled = on));
+  ["#btnRecognize", "#btnPickOne", "#btnUncrop", "#btnRotL", "#btnRotR", "#btnClearPhoto"].forEach((s) => ($(s).disabled = on));
   document.querySelectorAll("#inCamera, #inGallery").forEach((i) => (i.disabled = on));
   document.querySelectorAll(".capture-btns .file-btn").forEach((b) => b.classList.toggle("disabled", on));
   if (on) $("#recogResult").innerHTML = `<div class="card reading-card"><span class="mini-spin"></span>
@@ -1022,6 +1045,8 @@ function renderRecog() {
   if (!state.recog.length) { box.innerHTML = ""; return; }
   const how = state.lastAI ? ` <span class="small">(${state.lastAI.sec}초 · ${esc(state.lastAI.model.replace("gemini-", ""))})</span>` : "";
   box.innerHTML = `<p class="muted">문제 ${state.recog.length}개를 찾았어요${how}. 틀린 문제에는 미리 체크해 두었어요. 내용을 확인하고 고칠 곳은 고쳐 주세요.</p>` +
+    (state.recog.length > 1 ? `<div class="row pick-all"><span class="small">저장할 문제:</span>
+      <button class="btn sm" data-pickall="wrong">틀린 문제만</button><button class="btn sm" data-pickall="all">모두 고르기</button><button class="btn sm ghost" data-pickall="none">모두 빼기</button></div>` : "") +
     state.recog.map((p, i) => (p._i = i, `<div class="card recog ${p.keep ? "" : "notwrong"}" data-i="${i}">
       <div class="note-head">
         <label class="chk" style="margin:0"><input type="checkbox" data-keep ${p.keep ? "checked" : ""}> <b>${esc(p.number || i + 1)}번 저장</b></label>
@@ -1089,6 +1114,12 @@ $("#recogResult").addEventListener("click", async (e) => {
       return;
     }
   }
+  const pa = e.target.closest("[data-pickall]");
+  if (pa) {
+    syncRecog();
+    state.recog.forEach((p) => (p.keep = pa.dataset.pickall === "all" ? true : pa.dataset.pickall === "none" ? false : p.isWrong !== false));
+    renderRecog(); return;
+  }
   if (e.target.id === "btnSaveRecog") saveRecog();
 });
 function syncRecog() {
@@ -1125,11 +1156,11 @@ async function saveRecog() {
 }
 
 // 그림 자르기 창: 사진 위에 손가락(마우스)으로 네모를 그려서 고르기
-function cropEditor(canvas, initBox) {
+function cropEditor(canvas, initBox, title = "그림 부분 고르기", desc = "사진 위를 끌어서 그림이 들어갈 네모를 그려 주세요.", okLabel = "이 부분으로") {
   return new Promise((resolve) => {
-    openModal(`<h2>그림 부분 고르기</h2><p class="muted small">사진 위를 끌어서 그림이 들어갈 네모를 그려 주세요.</p>
+    openModal(`<h2>${esc(title)}</h2><p class="muted small">${esc(desc)}</p>
       <div class="crop-wrap" id="cropWrap"><img id="cropImg" src="${canvas.toDataURL("image/jpeg", 0.8)}"><div class="crop-rect hidden" id="cropRect"></div></div>
-      <div class="row" style="margin-top:10px"><button class="btn primary" id="cOk">이 부분으로</button><button class="btn" id="cNo">취소</button></div>`);
+      <div class="row" style="margin-top:10px"><button class="btn primary" id="cOk">${esc(okLabel)}</button><button class="btn" id="cNo">취소</button></div>`);
     const wrap = $("#cropWrap"), rect = $("#cropRect"), img = $("#cropImg");
     let box = Array.isArray(initBox) && initBox.length === 4 ? initBox.map(Number) : null, start = null;
     const draw = () => {

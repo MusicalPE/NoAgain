@@ -57,9 +57,14 @@ say "구글 계정: $ACCOUNT"
 if [ "$MODE" = "update" ]; then
   if [ -f "$STATE" ]; then . "$STATE"; fi
   if [ -z "${PROJECT:-}" ]; then
-    say "내 프로젝트 목록:"; gcloud projects list --format="value(projectId)" | grep -i "ttosil" || true
-    read -r -p "   ↳ 바꿀 프로젝트 이름(ttosil-로 시작)을 적어 주세요: " PROJECT
+    LIST=$(gcloud projects list --format="value(projectId)" 2>/dev/null | grep "^ttosil-" || true)
+    if [ "$(echo "$LIST" | grep -c .)" = "1" ]; then PROJECT="$LIST"; say "바꿀 앱: https://$PROJECT.web.app"
+    else
+      say "내 앱 목록:"; echo "$LIST" | sed 's/^/     /'
+      read -r -p "   ↳ 바꿀 앱의 이름(ttosil-로 시작)을 적어 주세요: " PROJECT
+    fi
   fi
+  gcloud config set project "$PROJECT" >/dev/null 2>&1
   [ -n "${SITE_KEY:-}" ] && [ -n "${APP_ID:-}" ] || {
     say "설정값을 다시 읽어 오는 중"
     APP_ID=$(api GET "https://firebase.googleapis.com/v1beta1/projects/$PROJECT/webApps" | jget "['apps'][0]['appId']")
@@ -67,10 +72,25 @@ if [ "$MODE" = "update" ]; then
     [ -n "$SITE_KEY" ] || read -r -p "   ↳ 사이트 키(6L...)를 적어 주세요: " SITE_KEY
   }
   if [ -z "${APP_NAME:-}" ]; then
-    read -r -p "   ↳ 앱 이름 (Enter 만 누르면 '또싫'): " APP_NAME; APP_NAME="${APP_NAME:-또싫}"
-    read -r -p "   ↳ 긴 이름 (Enter 만 누르면 '또 틀리기 싫어요'): " APP_SUB; APP_SUB="${APP_SUB:-또 틀리기 싫어요}"
+    # 지금 올라가 있는 앱에서 이름 읽어 오기
+    CUR=$(curl -fsS "https://$PROJECT.web.app/config.js" 2>/dev/null || true)
+    APP_NAME=$(echo "$CUR" | sed -n 's/^export const APP_NAME = "\(.*\)";$/\1/p' | head -1)
+    APP_SUB=$(echo "$CUR" | sed -n 's/^export const APP_SUBTITLE = "\(.*\)";$/\1/p' | head -1)
+    if [ -n "$APP_NAME" ]; then ok "앱 이름: $APP_NAME ($APP_SUB)"; else
+      read -r -p "   ↳ 앱 이름 (Enter 만 누르면 '또싫'): " APP_NAME; APP_NAME="${APP_NAME:-또싫}"
+      read -r -p "   ↳ 긴 이름 (Enter 만 누르면 '또 틀리기 싫어요'): " APP_SUB; APP_SUB="${APP_SUB:-또 틀리기 싫어요}"
+    fi
   fi
 else
+  # 이미 설치한 앱이 있으면 새로 만들지 말고 새 판으로 바꿀지 묻기
+  EXIST=""
+  [ -f "$STATE" ] && EXIST=$(. "$STATE"; echo "${PROJECT:-}")
+  [ -n "$EXIST" ] || EXIST=$(gcloud projects list --format="value(projectId)" 2>/dev/null | grep -m1 "^ttosil-" || true)
+  if [ -n "$EXIST" ]; then
+    warn "이 계정에 이미 설치한 앱이 있어요: https://$EXIST.web.app"
+    read -r -p "   ↳ 그 앱을 새 판으로 바꿀까요? (Enter = 예 / n = 아니요, 하나 더 새로 만들기): " yn
+    if [ "${yn,,}" != "n" ]; then exec bash "$0" update; fi
+  fi
 # ───────────────────────── 처음 설치 ─────────────────────────
   c_title "1. 앱 이름 정하기"
   echo "   예) 아이 이름이 지민이면  짧은 이름: 지또싫 / 긴 이름: 지민이는 또 틀리기 싫어요"

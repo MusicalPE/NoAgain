@@ -88,8 +88,16 @@ else
   c_title "2. 내 파이어베이스 프로젝트 만들기"
   PROJECT="ttosil-$(tr -dc 'a-z0-9' </dev/urandom | head -c 6)"
   say "프로젝트 이름: $PROJECT"
-  gcloud projects create "$PROJECT" --name="또싫 오답노트" >/dev/null 2>&1 \
-    || die "프로젝트를 만들지 못했어요. (구글 클라우드 약관 동의가 필요할 수 있어요: https://console.cloud.google.com 에 한 번 들어갔다 오기)"
+  if ! ERR=$(gcloud projects create "$PROJECT" --name="ttosil" 2>&1); then
+    echo "$ERR" | tail -5
+    if echo "$ERR" | grep -qi "quota\|limit\|exceeded"; then
+      die "만들 수 있는 프로젝트 수를 다 써서 새 프로젝트를 못 만들어요. 안 쓰는 프로젝트를 지우거나(https://console.cloud.google.com/cloud-resource-manager) 다른 구글 계정으로 해 주세요."
+    elif echo "$ERR" | grep -qi "terms\|tos"; then
+      die "구글 클라우드 약관 동의가 필요해요. https://console.cloud.google.com 에 들어가 동의한 뒤 다시 실행해 주세요."
+    else
+      die "프로젝트를 만들지 못했어요. 위 영어 문구를 함께 캡처해 주세요."
+    fi
+  fi
   gcloud config set project "$PROJECT" >/dev/null 2>&1
   ok "프로젝트를 만들었어요"
 
@@ -97,7 +105,7 @@ else
   gcloud services enable firebase.googleapis.com firestore.googleapis.com firebaserules.googleapis.com \
     firebasehosting.googleapis.com identitytoolkit.googleapis.com firebaseappcheck.googleapis.com \
     recaptchaenterprise.googleapis.com firebasevertexai.googleapis.com generativelanguage.googleapis.com \
-    --project "$PROJECT" >/dev/null 2>&1 || die "기능을 켜지 못했어요."
+    --project "$PROJECT" >/tmp/ttosil_enable.log 2>&1 || { tail -5 /tmp/ttosil_enable.log; die "기능을 켜지 못했어요. 위 영어 문구를 함께 캡처해 주세요."; }
   ok "기능을 켰어요"
 
   say "파이어베이스 연결 중"

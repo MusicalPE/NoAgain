@@ -497,7 +497,9 @@ function noteCard(n) {
     </div>
     ${n.wrongReason || n.explanation ? `<details class="exp"><summary>${n.wrongReason && !mineOk ? "틀린 이유와 풀이" : "풀이"}</summary>
       ${n.wrongReason && !mineOk ? `<p><b>틀린 이유</b><br>${rich(n.wrongReason)}</p>` : ""}
-      ${n.explanation ? `<p><b>풀이</b><br>${rich(n.explanation)}</p>` : ""}</details>` : ""}
+      ${n.explanation ? `<p><b>풀이</b><br>${rich(n.explanation)}</p>` : ""}
+      ${n.keyPoint ? `<p class="keypoint"><b>기억할 점</b> ${rich(n.keyPoint)}</p>` : ""}
+      ${n.needsCoach ? `<p class="muted small">더 꼼꼼한 풀이를 쓰는 중이에요…</p>` : ""}</details>` : ""}
     ${n.source === "ai" && n.myAnswer && !mineOk ? `<button class="btn-text small" data-act="fixok">내 답도 맞는 답이에요</button>` : ""}`}
     ${parent ? `<p class="muted small">원래 문제: ${esc(parent.question.slice(0, 40))}…</p>` : ""}
     <div class="note-actions">
@@ -553,7 +555,7 @@ const isFrequent = (n) => (n.wrongCount || 0) >= FREQ && n.status !== "mastered"
 // 자주 틀림에 처음 들어가는 순간, 약한 유형을 더 연습하게 비슷한 문제를 저절로 더 만들기 (문제마다 한 번만)
 function autoSimilarForFrequent(n) {
   if (!isFrequent(n) || n.autoSimilar) return false;
-  n.autoSimilar = true;
+  n.autoSimilar = true; n.needsSimilar = true;
   patchNote(n.id, { autoSimilar: true }).catch(() => {});
   enqueueSimilar([n]);
   return true;
@@ -637,6 +639,7 @@ $("#noteList").addEventListener("click", async (e) => {
     if (r) { toast(r, 4500); renderList(); }
   } else if (act === "similar") {
     askNotifyOnce();
+    n.needsSimilar = true;
     enqueueSimilar([n]);
     toast("비슷한 문제를 만들기 시작했어요. 다른 화면을 봐도 괜찮아요");
   }
@@ -890,6 +893,15 @@ $("#btnRotL").onclick = () => { if (!state.photo) return; state.photo.canvas = r
 $("#btnRotR").onclick = () => { if (!state.photo) return; state.photo.canvas = rotateCanvas(state.photo.canvas, 90); showPhoto(); };
 $("#btnClearPhoto").onclick = () => { state.photo = null; state.recog = []; $("#photoPreview").classList.add("hidden"); $("#recogResult").innerHTML = ""; };
 
+// 틀린 이유·풀이·기억할 점 쓰는 법 (풀이 다듬기에서 씀)
+const GUIDE_COACH = `【틀린 이유(wrongReason) 쓰는 법】 아이에게 말하듯 해요체로 2~3문장.
+   - 학생 답과 학생의 계산 흔적(studentWork)을 정답 풀이와 한 단계씩 맞대어, 정확히 어느 단계에서 무엇을 어떻게 했는지 짚는다.
+     예: "분자 3+2=5는 맞게 더했는데, 분모도 5+5=10으로 더해서 4와 10분의 5가 됐어요. 분모가 같은 분수끼리 더할 때 분모는 그대로 두고 분자만 더해요."
+   - 흔적이 없어 확실하지 않으면 학생 답에서 거꾸로 추리하고 "~했을 수 있어요"로 쓴다. 틀린 계산을 지어내지 않는다.
+   【풀이(explanation) 쓰는 법】 해요체, 단계마다 줄을 바꿔 ①②③으로.
+   - ① 문제에서 알아야 할 것(그림·조건 읽기) ② 계산 과정(왜 그렇게 하는지 한마디씩) ③ 답 확인(거꾸로 계산하거나 그림으로 다시 보기)
+   【기억할 점(keyPoint)】 이 유형에서 다음에 꼭 기억할 것 한 문장. 예: "분모가 같은 분수의 덧셈은 분자끼리만 더하고 분모는 그대로!"`;
+
 // 그림 설계도 안내 (사진 읽기·비슷한 문제·다시 풀기에서 함께 씀)
 const FIGURE_GUIDE = `그림 설계도 (숫자는 실제 값으로)
  수직선: {"type":"numberline","from":"5","to":"6","parts":6,"arrows":[3],"labels":{"2":"□"}}
@@ -926,14 +938,21 @@ function recognizePrompt() {
    그 그림이 아래 "그림 설계도"로 나타낼 수 있는 그림이면 인쇄된 그림만 보고(손글씨·낙서는 빼고) 설계도를 figure 에 적는다. 앱이 이 설계도로 깨끗하게 다시 그린다.
    눈금 수·칸 수·화살표 위치·색칠한 칸 수를 하나하나 세어서 원래 그림과 똑같게 만든다. 나타낼 수 없으면 figure 는 null.
 ${FIGURE_GUIDE}
-8. wrongReason 은 학생 답을 보고 왜 틀렸을지 학생 눈높이로 한두 문장, explanation 은 학생 눈높이의 단계별 풀이로 쓴다.
+8. studentWork 에는 문제 근처에 학생이 손으로 쓴 풀이·계산 흔적을 보이는 그대로 글로 옮긴다(없으면 빈 글자). 문제 글에는 넣지 않는다.
+   【틀린 이유(wrongReason) 쓰는 법】 아이에게 말하듯 해요체로 2~3문장.
+   - 학생 답과 학생의 계산 흔적(studentWork)을 정답 풀이와 한 단계씩 맞대어, 정확히 어느 단계에서 무엇을 어떻게 했는지 짚는다.
+     예: "분자 3+2=5는 맞게 더했는데, 분모도 5+5=10으로 더해서 4와 10분의 5가 됐어요. 분모가 같은 분수끼리 더할 때 분모는 그대로 두고 분자만 더해요."
+   - 흔적이 없어 확실하지 않으면 학생 답에서 거꾸로 추리하고 "~했을 수 있어요"로 쓴다. 틀린 계산을 지어내지 않는다.
+   【풀이(explanation) 쓰는 법】 해요체, 단계마다 줄을 바꿔 ①②③으로.
+   - ① 문제에서 알아야 할 것(그림·조건 읽기) ② 계산 과정(왜 그렇게 하는지 한마디씩) ③ 답 확인(거꾸로 계산하거나 그림으로 다시 보기)
+   【기억할 점(keyPoint)】 이 유형에서 다음에 꼭 기억할 것 한 문장. 예: "분모가 같은 분수의 덧셈은 분자끼리만 더하고 분모는 그대로!"
    explanation 에는 다 확인한 최종 풀이만 쓴다. "아, 다시 보니", "만약 ~였다면" 처럼 고쳐 생각한 흔적은 쓰지 않는다. 풀이 끝의 답과 correctAnswer 가 꼭 같아야 한다.
 9. subject 는 다음 중 하나: ${SUBJECTS.join(", ")}
 
 아래 JSON 하나만 출력한다.
 항목은 적힌 순서대로 쓴다. explanation(풀이)을 먼저 끝까지 쓰고, 그 풀이의 마지막 답을 글자 그대로 correctAnswer 에 옮긴다.
 그다음 학생 답(myAnswer)과 correctAnswer 를 비교해 isWrong 을 정하고, 틀렸으면 wrongReason 을 쓴다.
-{"rotate":0,"problems":[{"number":"문제 번호","subject":"과목","unit":"단원(짐작)","type":"문제 유형(짧게)","question":"문제 글","choices":[],"hasFigure":false,"figureBox":[],"figure":null,"myAnswer":"학생이 쓴 답, 없으면 빈 문자열","graded":true,"explanation":"단계별 풀이","correctAnswer":"풀이 마지막 답","answerFromAI":false,"isWrong":true,"wrongReason":""}]}`;
+{"rotate":0,"problems":[{"number":"문제 번호","subject":"과목","unit":"단원(짐작)","type":"문제 유형(짧게)","question":"문제 글","choices":[],"hasFigure":false,"figureBox":[],"figure":null,"studentWork":"학생의 계산 흔적","myAnswer":"학생이 쓴 답, 없으면 빈 문자열","graded":true,"explanation":"단계별 풀이","correctAnswer":"풀이 마지막 답","answerFromAI":false,"isWrong":true,"wrongReason":"","keyPoint":""}]}`;
 }
 
 async function readPhotoOnce() {
@@ -1056,7 +1075,7 @@ $("#recogResult").addEventListener("click", async (e) => {
       syncRecog();
       const r = await withResolveBusy(() => solveAgain(p));
       if (r) {
-        Object.assign(p, { correctAnswer: r.ans, explanation: r.explanation, wrongReason: r.wrongReason, answerFromAI: true });
+        Object.assign(p, { correctAnswer: r.ans, explanation: r.explanation, wrongReason: r.wrongReason, keyPoint: r.keyPoint, answerFromAI: true });
         if (r.drawn && p.figurePhoto && !p.figureDrawn) Object.assign(p, { figureDrawn: r.drawn, figureSpecJson: r.specJson, useDrawn: true, figure: r.drawn });
         if (p.myAnswer) { p.isWrong = !r.okKid; p.keep = !r.okKid || p.keep; }
         renderRecog(); toast(r.msg, 4500);
@@ -1091,12 +1110,15 @@ async function saveRecog() {
         subject: p.subject, unit: p.unit || "", type: p.type || "", question: p.question, choices: p.choices || [],
         myAnswer: p.myAnswer || "", correctAnswer: p.correctAnswer || "", answerFromAI: !!p.answerFromAI,
         wrongReason: p.wrongReason || "", explanation: p.explanation || "", figure: p.figure || "", figurePhoto: p.figurePhoto && p.figure !== p.figurePhoto ? p.figurePhoto : "", figureSpec: p.useDrawn && p.figureDrawn ? p.figureSpecJson : "", source: "photo", aiJudged: p.graded === false,
+        studentWork: p.studentWork || "", keyPoint: p.keyPoint || "", needsCoach: p.isWrong !== false, needsSimilar: withSimilar && p.isWrong !== false,
         status: p.isWrong === false ? "mastered" : "wrong", wrongCount: p.isWrong === false ? 0 : 1
       });
       saved++; savedNotes.push(note);
     }
     toast(`${saved}문제를 저장했어요` + (withSimilar ? ". 비슷한 문제는 뒤에서 만들고 있어요" : ""), 3500);
-    if (withSimilar) enqueueSimilar(savedNotes);
+    // 틀린 문제는 뒤에서 꼼꼼한 모델이 풀이를 다듬고, (고른 경우) 비슷한 문제도 만들기
+    const wrongOnes = savedNotes.filter((n) => n.needsCoach || n.needsSimilar);
+    if (wrongOnes.length) enqueueSimilar(wrongOnes);
     state.photo = null; state.recog = []; $("#photoPreview").classList.add("hidden"); $("#recogResult").innerHTML = "";
     busy(false); show("list");
   } catch (e) { busy(false); toast("저장하지 못했어요: " + (e.code || e.message), 4000); }
@@ -1141,12 +1163,14 @@ async function solveAgain(n) {
 보기: ${(n.choices || []).join(" | ") || "없음"}
 ${n.figureSpec ? "그림 설계도: " + (typeof n.figureSpec === "string" ? n.figureSpec : JSON.stringify(n.figureSpec)) : n.figure ? "(그림은 함께 보낸 사진)" : ""}
 학생 답: ${n.myAnswer || "없음"}
+학생의 계산 흔적: ${n.studentWork || "없음"}
+${GUIDE_COACH}
 
 아래 JSON 하나만 출력한다.
 항목은 적힌 순서대로 쓴다. explanation(풀이)을 먼저 끝까지 쓰고, 그 풀이의 마지막 답을 글자 그대로 correctAnswer 에 옮긴다.
 그다음 학생 답과 correctAnswer 를 비교해 studentCorrect 를 정한다.
 ${photoOf(n) && !n.figureSpec ? "함께 보낸 그림 사진이 아래 설계도로 나타낼 수 있는 그림이면, 인쇄된 그림만 보고 눈금·칸·화살표를 하나하나 세어 figure 에 설계도를 적는다(아니면 null).\n" + FIGURE_GUIDE : ""}
-{"figure":null,"explanation":"단계별 풀이","correctAnswer":"풀이 마지막 답","studentCorrect":false,"wrongReason":""}`;
+{"figure":null,"explanation":"단계별 풀이","correctAnswer":"풀이 마지막 답","studentCorrect":false,"wrongReason":"","keyPoint":""}`;
   const parts = [prompt];
   const photo = photoOf(n); if (photo) parts.push({ inlineData: { data: photo.split(",")[1], mimeType: "image/jpeg" } });
   const out = await askAI(parts, 0.1, null, AI_MODELS, { think: 8192, timeout: 120000 });
@@ -1157,13 +1181,13 @@ ${photoOf(n) && !n.figureSpec ? "함께 보낸 그림 사진이 아래 설계도
   const msg = (changed ? `정답을 ${ans.replace(/\$/g, "")}(으)로 고쳤어요` : "정답은 그대로예요. 풀이를 새로 썼어요") + (n.myAnswer ? (okKid ? ". 아이 답이 맞아요" : ". 아이 답은 다시 봐야 해요") : "");
   const spec = out.figure && typeof out.figure === "object" && !Array.isArray(out.figure) ? out.figure : null;
   const drawn = spec ? drawFigure(spec) : "";
-  return { ans, okKid, msg: msg + (drawn ? ". 그림도 깨끗하게 다시 그렸어요" : ""), drawn, specJson: drawn ? JSON.stringify(spec) : "", explanation: String(out.explanation || ""), wrongReason: okKid ? "" : String(out.wrongReason || n.wrongReason || "") };
+  return { ans, okKid, msg: msg + (drawn ? ". 그림도 깨끗하게 다시 그렸어요" : ""), drawn, specJson: drawn ? JSON.stringify(spec) : "", keyPoint: String(out.keyPoint || ""), explanation: String(out.explanation || ""), wrongReason: okKid ? "" : String(out.wrongReason || n.wrongReason || "") };
 }
 async function resolveNote(n) {
-  const { ans, okKid, msg, explanation, wrongReason, drawn, specJson } = await solveAgain(n);
+  const { ans, okKid, msg, explanation, wrongReason, drawn, specJson, keyPoint } = await solveAgain(n);
   const pic = drawn && photoOf(n) ? { figure: drawn, figurePhoto: photoOf(n), figureSpec: specJson } : {};
   await patchNote(n.id, {
-    correctAnswer: ans, explanation, answerFromAI: true, wrongReason, myAnswerOk: okKid, ...pic
+    correctAnswer: ans, explanation, answerFromAI: true, wrongReason, myAnswerOk: okKid, keyPoint, needsCoach: false, ...pic
   });
   return msg;
 }
@@ -1175,6 +1199,36 @@ async function withResolveBusy(fn) {
   try { const r = await fn(); recordSec("resolve", (Date.now() - t0) / 1000); return r; }
   catch (err) { logErr("다시 풀기", err); toast(aiErrorText(err), 8000); return null; }
   finally { clearInterval(tick); busy(false); }
+}
+
+// 풀이 다듬기: 꼼꼼한 모델이 시간을 들여 틀린 이유·풀이·기억할 점을 다시 쓰기
+async function coachNote(n) {
+  const prompt = `너는 아이의 오답을 함께 봐 주는 다정하고 꼼꼼한 초등학교 선생님이다.
+학생 학년: ${grade() || "모름"}
+아래 문제를 먼저 직접 끝까지 풀어 정답을 확인한 뒤, 아이가 다음엔 틀리지 않게 도와줄 설명을 쓴다.
+${GUIDE_COACH}
+
+문제: ${n.question}
+보기: ${(n.choices || []).join(" | ") || "없음"}
+${n.figureSpec ? "그림 설계도: " + (typeof n.figureSpec === "string" ? n.figureSpec : JSON.stringify(n.figureSpec)) : photoOf(n) ? "(그림은 함께 보낸 사진)" : ""}
+지금 적힌 정답: ${n.correctAnswer || "없음"} (틀렸을 수 있으니 직접 풀어 확인)
+학생 답: ${n.myAnswer || "없음"}
+학생의 계산 흔적: ${n.studentWork || "없음"}
+
+아래 JSON 하나만 출력한다. 항목은 적힌 순서대로: 풀이를 먼저 끝까지 쓰고, 그 마지막 답을 correctAnswer 에 옮긴 뒤, 학생 답과 비교해 studentCorrect·wrongReason 을 쓴다.
+{"explanation":"","correctAnswer":"","studentCorrect":false,"wrongReason":"","keyPoint":""}`;
+  const parts = [prompt];
+  const photo = photoOf(n); if (photo) parts.push({ inlineData: { data: photo.split(",")[1], mimeType: "image/jpeg" } });
+  const out = await askAI(parts, 0.3, null, AI_MODELS, { think: 6144, timeout: 120000 });
+  if (!out || !out.explanation) throw new Error("AI가 풀이를 돌려주지 않았어요");
+  const ans = out.correctAnswer ? fixMath(String(out.correctAnswer)) : n.correctAnswer;
+  const okKid = !!n.myAnswer && (out.studentCorrect === true || judgeAnswer({ correctAnswer: ans }, { cands: [n.myAnswer] }));
+  await patchNote(n.id, {
+    explanation: String(out.explanation), keyPoint: String(out.keyPoint || ""), needsCoach: false,
+    wrongReason: okKid ? "" : String(out.wrongReason || n.wrongReason || ""),
+    ...(ans && normAnswer(ans) !== normAnswer(n.correctAnswer) ? { correctAnswer: ans, answerFromAI: true } : {}),
+    ...(okKid ? { myAnswerOk: true } : {})
+  });
 }
 
 async function makeSimilar(n, count) {
@@ -1241,7 +1295,7 @@ function recordSec(kind, sec) {
 const leftText = (sec) => (sec <= 3 ? "거의 다 됐어요" : sec < 60 ? `약 ${Math.ceil(sec / 5) * 5}초 남음` : `약 ${Math.round(sec / 60)}분 남음`);
 
 // ───────── 뒤에서 비슷한 문제 만들기 (화면을 바꿔도 계속) ─────────
-const jobs = { queue: [], running: false, done: 0, made: 0, total: 0, fails: 0, lastErr: null };
+const jobs = { queue: [], running: false, done: 0, made: 0, coached: 0, total: 0, fails: 0, lastErr: null, phase: "similar" };
 // 만들 차례를 휴대폰에 적어 두기 → 앱을 껐다 켜도 이어서 만들기
 const JOBKEY = () => "odapJobs_" + (state.nb ? state.nb.id : "");
 function saveJobs() { try { localStorage.setItem(JOBKEY(), JSON.stringify(jobs.queue.map((n) => n.id).concat(jobs.current ? [jobs.current] : []))); } catch (_) {} }
@@ -1271,7 +1325,19 @@ async function runJobs() {
     jobs.current = n.id; saveJobs();
     jobs.started = Date.now();
     renderJobChip();
-    try { jobs.made += await makeSimilar(n, SIMILAR_COUNT); recordSec("similar", (Date.now() - jobs.started) / 1000); }
+    try {
+      if (n.needsCoach) {
+        jobs.phase = "coach"; renderJobChip();
+        try { await coachNote(n); jobs.coached++; } catch (e) { logErr("풀이 다듬기", e); await patchNote(n.id, { needsCoach: false }).catch(() => {}); }
+        if (state.view === "list") renderList();
+        jobs.started = Date.now();
+      }
+      jobs.phase = "similar";
+      if (n.needsSimilar !== false) {
+        jobs.made += await makeSimilar(n, SIMILAR_COUNT); recordSec("similar", (Date.now() - jobs.started) / 1000);
+        patchNote(n.id, { needsSimilar: false }).catch(() => {});
+      }
+    }
     catch (e) {
       logErr("비슷한 문제 만들기", e);
       // 다른 앱에 가 있는 동안 끊긴 거면, 돌아왔을 때 다시
@@ -1289,10 +1355,10 @@ async function runJobs() {
   }
   jobs.running = false;
   clearInterval(tick);
-  const made = jobs.made, fails = jobs.fails, err = jobs.lastErr;
-  Object.assign(jobs, { done: 0, made: 0, total: 0, fails: 0, lastErr: null });
+  const made = jobs.made, fails = jobs.fails, err = jobs.lastErr, coached = jobs.coached;
+  Object.assign(jobs, { done: 0, made: 0, coached: 0, total: 0, fails: 0, lastErr: null });
   renderJobChip();
-  const msg = made ? `비슷한 문제 ${made}개를 다 만들었어요` : "비슷한 문제를 만들지 못했어요";
+  const msg = [coached ? `풀이 ${coached}개를 꼼꼼하게 다듬었어요` : "", made ? `비슷한 문제 ${made}개를 만들었어요` : ""].filter(Boolean).join(", ") || "비슷한 문제를 만들지 못했어요";
   notifyDone(msg + (fails && made ? ` (${fails}문제는 실패)` : ""));
   if (fails) setTimeout(() => toast(aiErrorText(err), 8000), 3500);
 }
@@ -1305,7 +1371,7 @@ function renderJobChip() {
   if (jobs.running || jobs.queue.length) {
     const est = estSec("similar"), now = (Date.now() - (jobs.started || Date.now())) / 1000;
     const left = Math.max(0, est - now) + jobs.queue.length * est;
-    lines.push(`<button type="button" class="chip-line" data-go="list"><span class="mini-spin"></span>비슷한 문제 만드는 중 ${Math.min(jobs.done + 1, jobs.total)}/${jobs.total} · ${leftText(left)}</button>`);
+    lines.push(`<button type="button" class="chip-line" data-go="list"><span class="mini-spin"></span>${jobs.phase === "coach" ? "풀이 다듬는 중" : "비슷한 문제 만드는 중"} ${Math.min(jobs.done + 1, jobs.total)}/${jobs.total} · ${leftText(left)}</button>`);
   }
   chip.classList.toggle("hidden", !lines.length);
   chip.innerHTML = lines.join("");

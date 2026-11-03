@@ -59,8 +59,11 @@ function applyBrand(b) {
 try { const b = JSON.parse(localStorage.getItem("odapBrand") || "null"); applyBrand(b && b.name ? b : { name: DEF_NAME, sub: DEF_SUB }); } catch (_) { applyBrand({ name: DEF_NAME, sub: DEF_SUB }); }
 
 // 답 비교용 정리: 띄어쓰기·마침표·수식 기호를 빼고, ①을 1로
+// 끝에 붙은 단위(km, cm, 개, 명 …)는 비교할 때 빼기: "3 2/5 km" = "3 2/5"
+const UNIT_RE = /([\d}])\s*(?:\\(?:text|mathrm)\s*\{[^}]*\}|[A-Za-z가-힣°²³㎞㎝㎜㎏㎡ℓ]+)\s*$/;
+const stripUnit = (s) => String(s || "").replace(/\$/g, "").trim().replace(UNIT_RE, "$1");
 export function normAnswer(s) {
-  return fixMath(s)
+  return stripUnit(fixMath(s))
     .replace(/[①-⑩]/g, (c) => String(CIRCLED.indexOf(c) + 1))
     .replace(/\\d?frac\{([^}]*)\}\{([^}]*)\}/g, " $1/$2")
     .replace(/\$|\\,|\\ |\{|\}/g, "")
@@ -444,7 +447,7 @@ function readAnswer(root, n) {
 }
 // 수·분수·대분수·소수를 값으로 바꾸기 (못 바꾸면 null)
 function numValue(s) {
-  const t = cleanTeX(s).replace(/\$/g, "").replace(/\\d?frac\{(\d+)\}\{(\d+)\}/g, " $1/$2").replace(/[,\s]+/g, " ").trim();
+  const t = stripUnit(cleanTeX(s)).replace(/\\d?frac\{(\d+)\}\{(\d+)\}/g, " $1/$2").replace(/[,\s]+/g, " ").trim();
   let m = t.match(/^(?:(\d+)\s+)?(\d+)\s*\/\s*(\d+)$/);
   if (m) return +m[3] ? (+(m[1] || 0)) + (+m[2]) / (+m[3]) : null;
   m = t.match(/^\d+(\.\d+)?$/);
@@ -474,7 +477,7 @@ function noteCard(n) {
   const parent = n.parentId ? state.notes.find((x) => x.id === n.parentId) : null;
   const col = subjColor(n.subject);
   // 내 답이 정답과 같거나, 처음 찍을 때 맞은 문제로 저장된 경우는 맞은 답으로 보여 주기
-  const mineOk = !!n.myAnswer && (n.myAnswerOk || normAnswer(n.myAnswer) === normAnswer(n.correctAnswer) || (n.source === "photo" && !n.wrongCount));
+  const mineOk = !!n.myAnswer && (n.myAnswerOk || judgeAnswer(n, { cands: [n.myAnswer] }) || (n.source === "photo" && !n.wrongCount));
   // 비슷한 문제는 아이가 먼저 풀어 봐야 답과 풀이가 보인다
   const practice = n.source === "ai" && !n.tryCount && !n.myAnswer;
   return `<article class="note" data-id="${n.id}" style="--sc:${col}">
@@ -501,7 +504,7 @@ function noteCard(n) {
       ${n.explanation ? `<p><b>풀이</b><br>${rich(n.explanation)}</p>` : ""}
       ${n.keyPoint ? `<p class="keypoint"><b>기억할 점</b> ${rich(n.keyPoint)}</p>` : ""}
       ${n.needsCoach ? `<p class="muted small">더 꼼꼼한 풀이를 쓰는 중이에요…</p>` : ""}</details>` : ""}
-    ${n.source === "ai" && n.myAnswer && !mineOk ? `<button class="btn-text small" data-act="fixok">내 답도 맞는 답이에요</button>` : ""}`}
+    ${n.myAnswer && n.status !== "mastered" ? (mineOk ? `<button class="btn-text small" data-act="fixok">내 답이 정답과 같아요. 맞은 문제로 옮기기</button>` : `<button class="btn-text small" data-act="fixok">내 답도 맞는 답이에요</button>`) : ""}`}
     ${parent ? `<p class="muted small">원래 문제: ${esc(parent.question.slice(0, 40))}…</p>` : ""}
     <div class="note-actions">
       <button class="btn sm" data-act="similar">비슷한 문제 ${SIMILAR_COUNT}개 더</button>
@@ -632,7 +635,7 @@ $("#noteList").addEventListener("click", async (e) => {
     renderList();
     const again = document.querySelector(`.note[data-id="${id}"] details.exp`); if (again && !ok) again.open = true;
   } else if (act === "fixok") {
-    await patchNote(id, { myAnswerOk: true, status: "mastered", correctStreak: (n.correctStreak || 0) + 1, wrongCount: Math.max(0, (n.wrongCount || 1) - 1) });
+    await patchNote(id, { myAnswerOk: true, status: "mastered", wrongReason: "", correctStreak: (n.correctStreak || 0) + 1, wrongCount: Math.max(0, (n.wrongCount || 1) - 1) });
     state.keepShown.add(id);
     renderList(); toast("맞은 답으로 고쳤어요");
   } else if (act === "resolve") {
@@ -1026,6 +1029,12 @@ $("#btnRecognize").onclick = async () => {
       ...pickFigure(p),
       keep: p.isWrong !== false
     }));
+    // 채점 표시 없이 AI가 채점했는데 학생 답 값이 정답과 같으면 맞은 문제로 (예: 3 2/5 와 3 2/5 km)
+    state.recog.forEach((p) => {
+      if (p.myAnswer && p.graded === false && p.isWrong !== false && judgeAnswer({ correctAnswer: p.correctAnswer }, { cands: [String(p.myAnswer)] })) {
+        p.isWrong = false; p.keep = false; p.wrongReason = "";
+      }
+    });
     found = probs.length;
   } catch (e) { logErr("사진 읽기", e); toast(aiErrorText(e), 8000); }
   clearInterval(tick);
@@ -1219,7 +1228,8 @@ async function resolveNote(n) {
   const { ans, okKid, msg, explanation, wrongReason, drawn, specJson, keyPoint } = await solveAgain(n);
   const pic = drawn && photoOf(n) ? { figure: drawn, figurePhoto: photoOf(n), figureSpec: specJson } : {};
   await patchNote(n.id, {
-    correctAnswer: ans, explanation, answerFromAI: true, wrongReason, myAnswerOk: okKid, keyPoint, needsCoach: false, ...pic
+    correctAnswer: ans, explanation, answerFromAI: true, wrongReason, myAnswerOk: okKid, keyPoint, needsCoach: false, ...pic,
+    ...(okKid && n.aiJudged && !n.tryCount && n.status !== "mastered" ? { status: "mastered", wrongCount: 0, needsSimilar: false } : {})
   });
   return msg;
 }
@@ -1259,7 +1269,8 @@ ${n.figureSpec ? "그림 설계도: " + (typeof n.figureSpec === "string" ? n.fi
     explanation: String(out.explanation), keyPoint: String(out.keyPoint || ""), needsCoach: false,
     wrongReason: okKid ? "" : String(out.wrongReason || n.wrongReason || ""),
     ...(ans && normAnswer(ans) !== normAnswer(n.correctAnswer) ? { correctAnswer: ans, answerFromAI: true } : {}),
-    ...(okKid ? { myAnswerOk: true } : {})
+    ...(okKid ? { myAnswerOk: true } : {}),
+    ...(okKid && n.aiJudged && !n.tryCount && n.status !== "mastered" ? { status: "mastered", wrongCount: 0, needsSimilar: false } : {})
   });
 }
 

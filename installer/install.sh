@@ -143,9 +143,21 @@ else
   [ -n "$SITE_KEY" ] || die "사이트 키를 만들지 못했어요."
   ok "사이트 키: $SITE_KEY"
   PNUM=$(gcloud projects describe "$PROJECT" --format="value(projectNumber)" 2>/dev/null)
-  R=$(api PATCH "https://firebaseappcheck.googleapis.com/v1/projects/${PNUM:-$PROJECT}/apps/$APP_ID/recaptchaEnterpriseConfig?updateMask=siteKey" \
-      "{\"siteKey\":\"$SITE_KEY\"}")
-  echo "$R" | grep -q "$SITE_KEY" && ok "App Check 에 등록했어요" || warn "App Check 등록을 확인해야 해요: $(echo "$R" | head -c 200)"
+  APPCHECK_OK=""
+  for try in 1 2 3 4 5; do
+    R=$(api PATCH "https://firebaseappcheck.googleapis.com/v1/projects/${PNUM:-$PROJECT}/apps/$APP_ID/recaptchaEnterpriseConfig?updateMask=siteKey" \
+        "{\"siteKey\":\"$SITE_KEY\"}")
+    if echo "$R" | grep -q "$SITE_KEY"; then APPCHECK_OK=1; break; fi
+    [ "$try" = 1 ] && say "방금 켠 기능이 자리 잡을 때까지 잠깐 기다리는 중 (최대 1분)"
+    sleep 15
+  done
+  if [ -n "$APPCHECK_OK" ]; then ok "App Check 에 등록했어요"; else
+    warn "App Check 는 직접 등록해 주셔야 해요 (1분이면 돼요)"
+    echo "   https://console.firebase.google.com/project/$PROJECT/appcheck/apps"
+    echo "   앱 줄의 [등록] > \"Fraud Defense(이전 명칭: reCAPTCHA Enterprise)\" 고르기 > 아래 키 붙여 넣기 > [저장]"
+    echo "   붙여 넣을 키:  $SITE_KEY"
+    pause
+  fi
 
   c_title "5. 직접 눌러 주셔야 하는 곳 두 군데"
   echo "   구글이 본인이 직접 누르게 해 둔 곳이에요. 주소를 열어 차례로 눌러 주세요."

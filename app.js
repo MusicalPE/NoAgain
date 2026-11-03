@@ -305,7 +305,8 @@ async function setupNotebook() {
   await useNotebook(joined || (state.notebooks.some((n) => n.id === user.currentNb) ? user.currentNb : state.notebooks[0].id));
   if (joined) setTimeout(() => toast(`"${state.nb.name}"에 함께하게 됐어요`, 3500), 300);
   // 노트를 만든 사람에게 아이 이름을 한 번 물어보기
-  if (state.nb.owner === uid && !state.nb.kid && !state.nb.kidAsked) setTimeout(askKidName, 600);
+  // (설치 도우미로 아이 이름을 이미 넣은 앱이면 묻지 않음)
+  if (state.nb.owner === uid && !state.nb.kid && !state.nb.kidAsked && DEF_NAME === "또싫") setTimeout(askKidName, 600);
 }
 function askKidName() {
   openModal(`<h2>아이 이름을 알려 주세요</h2>

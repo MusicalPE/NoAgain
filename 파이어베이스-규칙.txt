@@ -13,6 +13,22 @@ service cloud.firestore {
       }
     }
 
+    // 문제 은행: 모두 읽기, 내가 만든 것만 넣기·지우기, "이상해요" 알림만 덧붙이기
+    match /bank/{id} {
+      allow read: if signedIn();
+      allow create: if signedIn()
+        && request.resource.data.by == me()
+        && request.resource.data.body is string && request.resource.data.body.size() < 20000
+        && request.resource.data.key is string && request.resource.data.key.size() < 200
+        && request.resource.data.reporters == [];
+      allow update: if signedIn()
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['reporters'])
+        && request.resource.data.reporters.hasAll(resource.data.reporters)
+        && request.resource.data.reporters.size() == resource.data.reporters.size() + 1
+        && me() in request.resource.data.reporters;
+      allow delete: if signedIn() && resource.data.by == me();
+    }
+
     // 같이 쓰는 노트
     match /notebooks/{nb} {
       // 만들기: 만든 사람 혼자로 시작

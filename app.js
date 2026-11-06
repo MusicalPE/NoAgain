@@ -4,10 +4,11 @@ import { initializeApp } from "https://www.gstatic.com/firebasejs/12.18.0/fireba
 import { initializeAppCheck, ReCaptchaEnterpriseProvider, getToken as getAppCheckToken } from "https://www.gstatic.com/firebasejs/12.18.0/firebase-app-check.js";
 import { getAuth, GoogleAuthProvider, signInWithPopup, signInWithRedirect, onAuthStateChanged, signOut }
   from "https://www.gstatic.com/firebasejs/12.18.0/firebase-auth.js";
-import { getFirestore, collection, doc, addDoc, updateDoc, deleteDoc, getDocs, getDoc, setDoc, query, orderBy, where, arrayUnion, arrayRemove, writeBatch }
+import { getFirestore, collection, doc, addDoc, updateDoc, deleteDoc, getDocs, getDoc, setDoc, query, orderBy, where, limit, arrayUnion, arrayRemove, writeBatch }
   from "https://www.gstatic.com/firebasejs/12.18.0/firebase-firestore.js";
 import { drawFigure } from "./figure.js";
 import * as CFG from "./config.js";
+import { fromTemplate, checkTemplate, likeness, bankKey, gradeKey, unitGuide, TEMPLATE_GUIDE } from "./bank.js";
 import { getAI, getGenerativeModel, GoogleAIBackend } from "https://www.gstatic.com/firebasejs/12.18.0/firebase-ai.js";
 
 // ───────── 작은 도구 ─────────
@@ -570,6 +571,7 @@ function noteCard(n) {
       <button class="btn sm" data-act="toggle">${n.status === "mastered" ? "다시 틀림으로" : "익힘으로"}</button>
       <button class="btn sm" data-act="edit">고치기</button>
       <button class="btn sm ghost" data-act="del">지우기</button>
+      ${n.fromBank ? `<button class="btn sm ghost" data-act="badbank">이 문제 이상해요</button>` : ""}
     </div>
   </article>`;
 }
@@ -675,6 +677,10 @@ $("#noteList").addEventListener("click", async (e) => {
   if (act === "del") {
     if (!confirm("이 문제를 지울까요?")) return;
     await removeNote(id); renderList(); toast("지웠어요");
+  } else if (act === "badbank") {
+    if (!confirm("문제 은행에 \"이상한 문제\"로 알리고 이 문제를 지울까요?\n(두 사람 이상 알리면 은행에서 더는 나오지 않아요)")) return;
+    try { await updateDoc(doc(db, "bank", n.fromBank), { reporters: arrayUnion(state.user.uid) }); } catch (e) { logErr("문제 은행 알리기", e); }
+    await removeNote(id); renderList(); toast("알려 주셔서 고마워요. 이 문제는 지웠어요");
   } else if (act === "toggle") {
     await patchNote(id, n.status === "mastered" ? { status: "wrong", correctStreak: 0 } : { status: "mastered" });
     renderList();
@@ -883,6 +889,8 @@ function openPrivacy(fromSettings) {
       다만 이 앱을 운영하는 사람(만든 이)은 관리 화면에서 저장된 내용에 접근할 수 있는 구조예요. 필요할 때 말고는 열어 보지 않아요.</p>
       <p><b>AI는 어떻게 쓰나요</b><br>문제 읽기·비슷한 문제 만들기·다시 풀기를 할 때 사진과 문제 글이 구글 Gemini(AI)로 보내져 처리돼요.
       [설정]에서 내 AI 키를 넣었으면 그 키(내 구글 계정)로 처리되고, 키는 이 노트를 함께 쓰는 사람만 볼 수 있게 저장돼요. 무료 키는 구글 약관상 보낸 내용을 구글이 서비스 개선에 쓸 수 있어요.</p>
+      <p><b>문제 은행</b><br>AI가 새로 만든 연습 문제(와 숫자만 바꿔 쓰는 문제 틀)는 이 앱을 쓰는 모두가 함께 쓰는 문제 은행에 모여요. 같은 유형을 틀린 다른 집에서 AI 없이 바로 연습 문제를 받을 수 있게요.
+      은행에는 AI가 새로 쓴 문제 글·정답·풀이와 과목·학년·단원만 들어가고, 사진·아이 답·이름·노트 정보는 들어가지 않아요.</p>
       <p><b>어디에 저장되나요</b><br>구글 파이어베이스(서울 지역)에 저장돼요.</p>
       <p><b>지우고 싶으면</b><br>[설정] > [이 노트 지우기]를 누르면 노트와 그 안의 문제가 모두 지워져요. 초대받은 가족은 [이 노트에서 나가기]를 누르면 돼요.</p>
       <p class="muted small">문의: 앱을 알려 준 사람에게 연락해 주세요. — 만든 사람: 음악적체육인</p>
@@ -1053,6 +1061,7 @@ const FIGURE_GUIDE = `그림 설계도 (숫자는 실제 값으로)
 function recognizePrompt() {
   return `너는 학생의 오답노트를 정리해 주는 친절한 선생님이다. 사진은 학생이 푼 시험지·문제집·학습지다.
 학생 학년: ${grade() || "모름(사진을 보고 짐작)"}
+${unitGuide(grade())}
 할 일
 0. 사진이 옆으로 눕거나 거꾸로 찍혔을 수 있다. 글자 방향을 보고 머릿속으로 바로 세워서 읽는다.
    사진을 바로 세우려면 시계 방향으로 몇 도 돌려야 하는지 rotate 에 0, 90, 180, 270 중 하나로 적는다.
@@ -1392,7 +1401,69 @@ ${n.figureSpec ? "그림 설계도: " + (typeof n.figureSpec === "string" ? n.fi
   });
 }
 
+// ───────── 문제 은행 (모두가 함께 쓰는 문제 틀) ─────────
+async function bankLoad(key) {
+  try {
+    const snap = await getDocs(query(collection(db, "bank"), where("key", "==", key), limit(80)));
+    return snap.docs.map((d) => ({ id: d.id, ...d.data() }))
+      .filter((b) => !(b.reporters || []).includes(state.user.uid) && (b.reporters || []).length < 2);
+  } catch (e) { logErr("문제 은행 읽기", e); return []; }
+}
+// 이 문제와 같은 유형의 은행 문제 찾기: 유형 이름이 같거나, 문제 글(숫자 뺀)이 많이 닮은 것
+function bankMatch(n, items) {
+  if (!items.length) return [];
+  if (n.skill) { const same = items.filter((b) => b.skill === n.skill); if (same.length) return same; }
+  const scored = items.map((b) => ({ b, s: likeness(n.question, b.sample) + (n.type && b.skill === n.type ? 0.25 : 0) }))
+    .filter((x) => x.s >= 0.45).sort((x, y) => y.s - x.s);
+  return scored.length ? items.filter((b) => b.skill === scored[0].b.skill) : [];
+}
+const qKey = (q) => String(q || "").replace(/\s+/g, "");
+async function similarFromBank(n, count, items) {
+  const pool = bankMatch(n, items); if (!pool.length) return 0;
+  const have = new Set(state.notes.map((x) => qKey(x.question)));
+  const tpls = pool.filter((b) => b.kind === "tpl").sort(() => Math.random() - 0.5);
+  const fixed = pool.filter((b) => b.kind === "fixed").sort(() => Math.random() - 0.5);
+  let made = 0;
+  for (let i = 0; i < count * 4 && made < count; i++) {
+    let p = null, from = null;
+    try {
+      if (tpls.length) { from = tpls[i % tpls.length]; const t = JSON.parse(from.body); p = fromTemplate(t); if (p) { p.choices = []; p.keyPoint = t.keyPoint || ""; } }
+      else { from = fixed[i]; if (!from) break; p = JSON.parse(from.body); }
+    } catch (e) { logErr("문제 은행 틀", e); continue; }
+    if (!p || !p.question || have.has(qKey(p.question))) continue;
+    have.add(qKey(p.question));
+    const spec = p.figureSpec && typeof p.figureSpec === "object" ? p.figureSpec : null;
+    const pic = spec ? drawFigure(spec) : "";
+    await addNote({
+      figure: pic, figureSpec: pic ? JSON.stringify(spec) : "",
+      subject: n.subject, unit: n.unit, type: n.type, skill: from.skill || "", question: String(p.question),
+      choices: Array.isArray(p.choices) ? p.choices.map(String) : [], correctAnswer: fixMath(String(p.correctAnswer || "")),
+      answerFromAI: true, explanation: String(p.explanation || ""), keyPoint: String(p.keyPoint || ""),
+      source: "ai", parentId: n.id, fromBank: from.id, wrongCount: 0, status: "wrong"
+    });
+    made++;
+  }
+  if (made && !n.skill && pool[0].skill) patchNote(n.id, { skill: pool[0].skill }).catch(() => {});
+  return made;
+}
+async function bankSave(n, key, skill, kind, body, sample) {
+  try {
+    await addDoc(collection(db, "bank"), {
+      key, subject: n.subject || "기타", grade: gradeKey(grade()), unit: n.unit || "", skill, kind,
+      body: JSON.stringify(body), sample: String(sample || "").slice(0, 400), by: state.user.uid, createdAt: Date.now(), reporters: []
+    });
+  } catch (e) { logErr("문제 은행 저장", e); }
+}
+
 async function makeSimilar(n, count) {
+  // 1) 은행에 같은 유형 틀이 있으면 AI 없이 바로
+  const key = bankKey(n.subject, grade(), n.unit);
+  const items = await bankLoad(key);
+  let fromBank = 0;
+  try { fromBank = await similarFromBank(n, count, items); } catch (e) { logErr("문제 은행", e); }
+  if (fromBank >= count) return fromBank;
+  count -= fromBank;
+  const skills = [...new Set(items.map((b) => b.skill).filter(Boolean))].slice(0, 30);
   const prompt = `너는 학생에게 연습 문제를 내 주는 선생님이다. 아래 "원래 문제"와 같은 유형의 새 문제를 ${count}개 만든다.
 학생 학년: ${grade() || "원래 문제 수준에 맞춤"}
 규칙
@@ -1411,6 +1482,12 @@ ${FIGURE_GUIDE}
 - 수식은 LaTeX 로 쓰고 $...$ 로 감싼다.
 - explanation 은 학생 눈높이의 단계별 풀이. 다 확인한 최종 풀이만 쓰고, 고쳐 생각한 흔적("아, 다시 보니")은 쓰지 않는다. 풀이 끝의 답과 correctAnswer 가 같아야 한다.
 
+문제 유형 이름(skill)
+- 원래 문제의 유형을 짧게(20자 안) 이름 붙여 skill 에 쓴다. 예: "분모가 같은 대분수 뺄셈 문장제", "수직선의 분수 읽기"
+- ${skills.length ? "이미 있는 유형 이름: " + skills.map((x) => `"${x}"`).join(", ") + " — 이 중 같은 유형이 있으면 그 이름을 글자 그대로 쓴다." : "아직 정해진 이름이 없으니 새로 짓는다."}
+
+${TEMPLATE_GUIDE}
+
 원래 문제
 과목: ${n.subject} / 단원: ${n.unit} / 유형: ${n.type}
 문제: ${n.question}
@@ -1420,7 +1497,8 @@ ${n.figureSpec ? "원래 문제의 그림 설계도: " + (typeof n.figureSpec ==
 
 아래 JSON 하나만 출력한다.
 항목은 적힌 순서대로 쓴다. explanation(풀이)을 먼저 끝까지 쓰고, 그 풀이의 마지막 답을 글자 그대로 correctAnswer 에 옮긴다.
-{"problems":[{"question":"","figure":null,"choices":[],"explanation":"단계별 풀이","correctAnswer":"풀이 마지막 답"}]}`;
+{"skill":"유형 이름","problems":[{"question":"","figure":null,"choices":[],"explanation":"단계별 풀이","correctAnswer":"풀이 마지막 답"}],"template":null}
+template 은 problems 를 다 쓴 다음에 쓴다. 쓸 수 없는 유형이면 null.`;
   const parts = [prompt];
   const photo = photoOf(n); if (photo) parts.push({ inlineData: { data: photo.split(",")[1], mimeType: "image/jpeg" } });
   const out = await askAI(parts, 0.7, null, AI_MODELS, { think: 4096, timeout: 90000 });
@@ -1444,7 +1522,24 @@ ${n.figureSpec ? "원래 문제의 그림 설계도: " + (typeof n.figureSpec ==
     } catch (e) { lastErr = e; }
   }
   if (!saved && lastErr) throw lastErr;
-  return saved;
+  // 2) 은행에 남기기: 틀이 검사를 통과하면 틀로, 아니면 만든 문제를 그대로
+  const skill = String(out?.skill || n.skill || n.type || "").trim().slice(0, 40);
+  if (skill && skill !== n.skill) patchNote(n.id, { skill }).catch(() => {});
+  n.skill = n.skill || skill;
+  const tpl = out && out.template && typeof out.template === "object" && !Array.isArray(out.template) ? out.template : null;
+  const bad = tpl ? checkTemplate(tpl, (a) => judgeAnswer({ correctAnswer: fixMath(String(probs[0].correctAnswer || "")) }, { cands: [a] })) : "틀 없음";
+  if (tpl && bad) logErr("문제 틀 검사", bad);
+  if (skill) {
+    if (tpl && !bad) {
+      if (!items.some((b) => b.kind === "tpl" && b.skill === skill)) await bankSave(n, key, skill, "tpl", { ...tpl, keyPoint: n.keyPoint || "" }, probs[0].question);
+    } else {
+      for (const p of probs) {
+        const spec = p.figure && typeof p.figure === "object" && !Array.isArray(p.figure) ? p.figure : null;
+        await bankSave(n, key, skill, "fixed", { question: String(p.question), choices: Array.isArray(p.choices) ? p.choices.map(String) : [], correctAnswer: fixMath(String(p.correctAnswer ?? "")), explanation: String(p.explanation ?? ""), figureSpec: spec }, p.question);
+      }
+    }
+  }
+  return saved + fromBank;
 }
 
 // ───────── 걸린 시간 기억해서 예상 시간 알려 주기 ─────────

@@ -199,7 +199,7 @@ cfg=$(api GET "https://firebase.googleapis.com/v1beta1/projects/$PROJECT/webApps
 echo "$cfg" | grep -q apiKey || die "앱 설정값을 읽지 못했어요: $(echo "$cfg" | head -c 300)"
 
 BUILD="$(mktemp -d)"; SITE="$BUILD/site"; mkdir -p "$SITE"
-for f in index.html app.js figure.js sw.js style.css qrcode.js manifest.webmanifest config.js; do
+for f in index.html app.js figure.js bank.js sw.js style.css qrcode.js manifest.webmanifest config.js; do
   cp "$ROOT/$f" "$SITE/" || die "$f 파일이 없어요."
 done
 cp "$ROOT"/installer/icons/*.png "$SITE/"

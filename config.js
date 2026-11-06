@@ -38,3 +38,11 @@ export const SUBJECT_COLORS = {
 
 // 비슷한 문제를 한 번에 몇 개 만들지
 export const SIMILAR_COUNT = 2;
+
+// 같이 쓰는 앱: 다른 사람은 사진 읽기를 몇 번까지 앱의 AI로 체험하게 할지
+//   체험이 끝나면 [설정]에서 자기 Gemini API 키를 넣어 써요.
+//   0 이면 모두 앱의 AI를 쓰고, 키 넣는 칸도 보이지 않아요.
+export const AI_TRIAL = 3;
+// 체험 횟수와 상관없이 앱의 AI를 쓰는 사람(만든 사람)의 이메일을 SHA-256 으로 바꾼 값
+//   이 사람이 만든 노트에 초대받은 가족도 키 없이 써요.
+export const FREE_OWNERS = ["c8c382c89009b5a22547b0b08fe70e4e7793616baabe579e606048d94304ef2f"];

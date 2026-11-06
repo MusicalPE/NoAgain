@@ -215,6 +215,8 @@ block = "export const FIREBASE_CONFIG = {\n" + ",\n".join(f'  {k}: {json.dumps(c
 p = os.path.join(site, "config.js"); s = open(p, encoding="utf-8").read()
 s = re.sub(r"export const FIREBASE_CONFIG = \{.*?\};", lambda m: block, s, flags=re.S)
 s = re.sub(r'export const RECAPTCHA_SITE_KEY = "[^"]*";', f'export const RECAPTCHA_SITE_KEY = {json.dumps(os.environ["SITE_KEY"])};', s)
+s = re.sub(r"export const AI_TRIAL = \d+;", "export const AI_TRIAL = 0;", s)
+s = re.sub(r"export const FREE_OWNERS = \[[^\]]*\];", "export const FREE_OWNERS = [];", s)
 s = re.sub(r'export const APP_NAME = "[^"]*";', f"export const APP_NAME = {json.dumps(name, ensure_ascii=False)};", s)
 s = re.sub(r'export const APP_SUBTITLE = "[^"]*";', f"export const APP_SUBTITLE = {json.dumps(sub, ensure_ascii=False)};", s)
 open(p, "w", encoding="utf-8").write(s)

@@ -7,6 +7,7 @@ import { getAuth, GoogleAuthProvider, signInWithPopup, signInWithRedirect, onAut
 import { getFirestore, collection, doc, addDoc, updateDoc, deleteDoc, getDocs, getDoc, setDoc, query, orderBy, where, arrayUnion, arrayRemove, writeBatch }
   from "https://www.gstatic.com/firebasejs/12.18.0/firebase-firestore.js";
 import { drawFigure } from "./figure.js";
+import * as CFG from "./config.js";
 import { getAI, getGenerativeModel, GoogleAIBackend } from "https://www.gstatic.com/firebasejs/12.18.0/firebase-ai.js";
 
 // ───────── 작은 도구 ─────────
@@ -134,12 +135,56 @@ function withTimeout(promise, ms, label) {
 const THINK = (budget) => ({ thinkingConfig: { thinkingBudget: budget } });
 const THINK_RE = /thinking|budget|invalid.?argument|\b400\b/i;
 const noThink = new Set();
+// ───────── AI 키 (같이 쓰는 앱) ─────────
+// 만든 사람 가족: 앱의 AI / 키를 넣은 노트: 그 키 / 나머지: 사진 읽기 AI_TRIAL 번 체험 뒤 키 필요
+const AI_TRIAL = +CFG.AI_TRIAL || 0;
+const FREE_OWNERS = Array.isArray(CFG.FREE_OWNERS) ? CFG.FREE_OWNERS : [];
+const keyOf = () => (state.nb && state.nb.aiKey) || "";
+let inJob = false; // 이미 저장한 문제의 뒷일(풀이 다듬기·비슷한 문제)은 체험이 끝나도 마무리
+function aiMode() {
+  if (!AI_TRIAL || !state.nb) return "builtin";
+  if (keyOf()) return "key";
+  if (state.nb.freeAI) return "builtin";
+  return (state.nb.aiTrialUsed || 0) < AI_TRIAL ? "trial" : "need";
+}
+const trialLeft = () => Math.max(0, AI_TRIAL - ((state.nb && state.nb.aiTrialUsed) || 0));
+// AI를 쓰기 전에 확인: 키가 필요하면 안내 창을 띄우고 false
+function aiReady() {
+  if (aiMode() !== "need") return true;
+  openKeyModal(false, "무료 체험 " + AI_TRIAL + "번을 다 썼어요");
+  return false;
+}
+async function sha256(t) {
+  const b = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(t));
+  return [...new Uint8Array(b)].map((x) => x.toString(16).padStart(2, "0")).join("");
+}
+// 내 키로 Gemini 부르기 (Google AI Studio 에서 받은 키)
+const GEMINI_URL = "https://generativelanguage.googleapis.com/v1beta/models/";
+async function callKeyModel(name, parts, cfg, ms) {
+  const body = { contents: [{ role: "user", parts: parts.map((p) => (typeof p === "string" ? { text: p } : p)) }], generationConfig: cfg };
+  const ctl = new AbortController(); const timer = setTimeout(() => ctl.abort(), ms);
+  try {
+    const r = await fetch(GEMINI_URL + encodeURIComponent(name) + ":generateContent", {
+      method: "POST", headers: { "Content-Type": "application/json", "x-goog-api-key": keyOf() }, body: JSON.stringify(body), signal: ctl.signal
+    });
+    const j = await r.json().catch(() => ({}));
+    if (!r.ok) throw new Error(`[${r.status}] ${(j.error && j.error.status) || ""} ${(j.error && j.error.message) || r.statusText}`);
+    const text = ((j.candidates && j.candidates[0] && j.candidates[0].content && j.candidates[0].content.parts) || []).filter((x) => !x.thought).map((x) => x.text || "").join("");
+    return { response: { text: () => text } };
+  } catch (e) {
+    if (e && e.name === "AbortError") throw new Error(`timeout: ${name} 응답이 ${ms / 1000}초 넘게 없었어요`);
+    throw e;
+  } finally { clearTimeout(timer); }
+}
+const BADKEY_RE = /api.?key.*(not valid|invalid|expired)|API_KEY_INVALID|API_KEY_EXPIRED/i;
 async function callModel(name, parts, temperature, json = true, ms = 60000, think = 0) {
   const base = { temperature, ...(json ? { responseMimeType: "application/json" } : {}) };
-  const run = (cfg) => withTimeout(getGenerativeModel(ai, { model: name, generationConfig: cfg }).generateContent(parts), ms, `${name} 응답이 ${ms / 1000}초 넘게 없었어요`);
+  const useKey = aiMode() === "key";
+  const run = (cfg) => useKey ? callKeyModel(name, parts, cfg, ms)
+    : withTimeout(getGenerativeModel(ai, { model: name, generationConfig: cfg }).generateContent(parts), ms, `${name} 응답이 ${ms / 1000}초 넘게 없었어요`);
   if (!noThink.has(name)) {
     try { return await run({ ...base, ...THINK(think) }); }
-    catch (e) { if (!THINK_RE.test(String(e?.message || e))) throw e; noThink.add(name); }
+    catch (e) { const m = String(e?.message || e); if (!THINK_RE.test(m) || BADKEY_RE.test(m)) throw e; noThink.add(name); }
   }
   return run(base);
 }
@@ -154,6 +199,7 @@ function orderModels(list) {
 }
 async function askAI(parts, temperature = 0.2, onStep, list = AI_MODELS, opt = {}) {
   let lastErr;
+  if (aiMode() === "need" && !inJob) throw new Error("NEED_KEY");
   const models = orderModels(list);
   for (let i = 0; i < models.length; i++) {
     const name = models[i];
@@ -167,6 +213,7 @@ async function askAI(parts, temperature = 0.2, onStep, list = AI_MODELS, opt = {
       lastErr = e;
       const msg = String(e?.message || e);
       // 붐비거나, 모델이 없거나, 무료 사용량이 찼거나, 너무 오래 걸리면 바로 다음 모델로
+      if (BADKEY_RE.test(msg)) throw e;
       if (BUSY_RE.test(msg) || NO_MODEL_RE.test(msg) || QUOTA_RE.test(msg) || /^timeout/i.test(msg)) { restModel(name); continue; }
       throw e;
     }
@@ -176,6 +223,9 @@ async function askAI(parts, temperature = 0.2, onStep, list = AI_MODELS, opt = {
 function aiErrorText(e) {
   const m = String(e?.message || e);
   const raw = " (" + m.replace(/^\[[^\]]*\]\s*/, "").replace(/Error fetching from \S+\s*/i, "").replace(/^[:\s]+/, "").slice(0, 110) + ")";
+  if (m === "NEED_KEY") { setTimeout(() => openKeyModal(false, "무료 체험 " + AI_TRIAL + "번을 다 썼어요"), 50); return "AI 키를 넣어 주세요"; }
+  if (BADKEY_RE.test(m)) { setTimeout(() => openKeyModal(false, "넣어 둔 AI 키가 맞지 않아요"), 50); return "AI 키가 맞지 않아요. [설정] > [AI 키]에서 다시 넣어 주세요"; }
+  if (aiMode() === "key" && QUOTA_RE.test(m)) return "내 AI 키의 무료 사용량이 잠깐 찼어요. 1~2분 뒤(하루 한도면 내일) 다시 해 보세요";
   if (/^timeout/i.test(m)) return "AI가 답을 주지 않아 멈췄어요. [설정] > [AI 연결 점검]을 눌러 어디서 멈추는지 확인해 주세요";
   if (/app.?check|attestation|recaptcha/i.test(m)) return "App Check 설정을 확인해 주세요" + raw;
   if (BUSY_RE.test(m)) return "AI 서버가 지금 붐벼서 모든 모델이 답하지 못했어요. 몇 분 뒤 다시 해 보세요";
@@ -278,6 +328,14 @@ async function listNotebooks() {
 async function useNotebook(id) {
   state.nb = state.notebooks.find((n) => n.id === id) || state.notebooks[0];
   applyBrand(brandFor(state.nb));
+  // 만든 사람이 연 자기 노트는 "앱의 AI 그대로" 표시 (초대받은 가족도 같이)
+  if (AI_TRIAL && FREE_OWNERS.length && state.nb.owner === state.user.uid && !state.nb.freeAI) {
+    try {
+      if (FREE_OWNERS.includes(await sha256(String(state.user.email || "").trim().toLowerCase()))) {
+        await updateDoc(nbRef(state.nb.id), { freeAI: true }); state.nb.freeAI = true;
+      }
+    } catch (_) {}
+  }
   try { await setDoc(doc(db, "users", state.user.uid), { currentNb: state.nb.id }, { merge: true }); } catch (_) {}
 }
 async function createNotebook(name, gradeText = "") {
@@ -639,9 +697,11 @@ $("#noteList").addEventListener("click", async (e) => {
     state.keepShown.add(id);
     renderList(); toast("맞은 답으로 고쳤어요");
   } else if (act === "resolve") {
+    if (!aiReady()) return;
     const r = await withResolveBusy(() => resolveNote(n));
     if (r) { toast(r, 4500); renderList(); }
   } else if (act === "similar") {
+    if (!aiReady()) return;
     askNotifyOnce();
     n.needsSimilar = true;
     enqueueSimilar([n]);
@@ -710,6 +770,9 @@ function openSettings() {
       <label>학년 (AI가 눈높이를 맞추는 데 써요)<input id="sGrade" placeholder="예: 초등 4학년, 중학교 2학년" value="${esc(nb.grade || "")}"></label>
       ${others}
     </div>
+    ${AI_TRIAL && !nb.freeAI ? `<h3 style="margin-top:14px">AI 키</h3>
+    <p class="small">${keyOf() ? "내 AI 키로 쓰는 중이에요." : trialLeft() ? `무료 체험 사진 읽기가 <b>${trialLeft()}번</b> 남았어요. 계속 쓰려면 내 AI 키를 넣어 주세요.` : "무료 체험을 다 썼어요. 내 AI 키를 넣으면 계속 쓸 수 있어요."}</p>
+    <button class="btn" id="sKey">${keyOf() ? "AI 키 바꾸기" : "AI 키 넣기"}</button>` : ""}
     <h3 style="margin-top:14px">함께 쓰는 사람</h3>
     <ul class="people">${people}</ul>
     <button class="btn red" id="sInvite">QR로 초대하기</button>
@@ -728,6 +791,7 @@ function openSettings() {
   $("#sOut").onclick = async () => { closeModal(); state.notes = []; state.retry = null; state.nb = null; await signOut(auth); };
   $("#sInvite").onclick = () => openInvite();
   $("#sDiag").onclick = () => openDiag();
+  if ($("#sKey")) $("#sKey").onclick = () => openKeyModal(true);
   $("#sPrivacy").onclick = () => openPrivacy(true);
   if ($("#sDelete")) $("#sDelete").onclick = () => deleteNotebook(nb);
   $("#sNotify").onclick = async () => {
@@ -768,6 +832,48 @@ function openSettings() {
 }
 
 // 개인정보 안내
+// AI 키 넣기 안내 (Google AI Studio 에서 무료로 받는 Gemini API 키)
+function openKeyModal(fromSettings, reason = "") {
+  const has = !!keyOf();
+  openModal(`<h2>AI 키 ${has ? "바꾸기" : "넣기"}</h2>
+    ${reason ? `<p><b>${esc(reason)}</b></p>` : ""}
+    <p class="muted">사진 읽기·비슷한 문제 만들기는 구글 Gemini(AI)로 해요. 내 구글 계정으로 키를 받아 넣으면 계속 쓸 수 있어요. 돈은 들지 않아요(카드 등록 없음).</p>
+    <ol class="ios-steps">
+      <li>컴퓨터나 휴대폰에서 <a href="https://aistudio.google.com/apikey" target="_blank" rel="noopener"><b>aistudio.google.com/apikey</b></a> 열기 → 구글 계정으로 로그인</li>
+      <li>처음이면 약관에 동의하고, <b>[API 키 만들기]</b>(Create API key) 누르기</li>
+      <li>만들어진 키(AIza로 시작하는 긴 글자) 옆의 <b>복사</b> 단추 누르기</li>
+      <li>아래 칸에 붙여넣기 → <b>[저장]</b></li>
+    </ol>
+    <div class="edit"><label>AI 키<input id="kKey" placeholder="AIza…" autocomplete="off" spellcheck="false" value=""></label></div>
+    <p class="muted small">키는 이 노트에만 저장돼서, 이 노트를 함께 쓰는 가족 기기에서도 같이 쓰여요. 다른 사람에게는 보이지 않아요.<br>
+    무료 키는 하루에 쓸 수 있는 양이 정해져 있고, 구글 약관상 보낸 내용(사진·문제)을 구글이 서비스를 좋게 하는 데 쓸 수 있어요. 걱정되면 AI Studio에서 결제를 연결한 키를 쓰면 그렇지 않아요.</p>
+    <div class="row" style="margin-top:12px">
+      <button class="btn primary" id="kSave">저장</button>
+      ${has ? `<button class="btn ghost" id="kDel">키 지우기</button>` : ""}
+      <button class="btn" id="kBack">${fromSettings ? "돌아가기" : "닫기"}</button>
+    </div>`);
+  $("#kBack").onclick = () => (fromSettings ? openSettings() : closeModal());
+  if ($("#kDel")) $("#kDel").onclick = async () => {
+    if (!confirm("이 노트에 넣어 둔 AI 키를 지울까요?")) return;
+    try { await updateDoc(nbRef(state.nb.id), { aiKey: "" }); state.nb.aiKey = ""; toast("키를 지웠어요"); fromSettings ? openSettings() : closeModal(); }
+    catch (e) { toast("지우지 못했어요: " + (e.code || e.message)); }
+  };
+  $("#kSave").onclick = async () => {
+    const k = $("#kKey").value.trim().replace(/\s+/g, "");
+    if (!/^AIza[\w-]{30,}$/.test(k)) { toast("키 모양이 아니에요. AIza 로 시작하는 글자를 통째로 붙여 넣어 주세요", 5000); return; }
+    $("#kSave").disabled = true; $("#kSave").textContent = "확인하는 중…";
+    try {
+      const r = await fetch(GEMINI_URL + "?pageSize=1", { headers: { "x-goog-api-key": k } });
+      if (!r.ok) { const j = await r.json().catch(() => ({})); throw new Error((j.error && j.error.message) || ("HTTP " + r.status)); }
+      await updateDoc(nbRef(state.nb.id), { aiKey: k }); state.nb.aiKey = k;
+      toast("키를 넣었어요. 이제 내 키로 AI를 써요", 4000); fromSettings ? openSettings() : closeModal();
+    } catch (e) {
+      $("#kSave").disabled = false; $("#kSave").textContent = "저장";
+      toast("키를 쓸 수 없어요: " + String(e.message || e).slice(0, 90), 7000);
+    }
+  };
+  $("#kKey").focus();
+}
 function openPrivacy(fromSettings) {
   openModal(`<h2>개인정보 안내</h2>
     <div class="privacy">
@@ -775,7 +881,8 @@ function openPrivacy(fromSettings) {
       문제지 사진 원본은 저장하지 않아요.</p>
       <p><b>누가 볼 수 있나요</b><br>노트를 만든 사람과 QR로 초대받은 가족만 볼 수 있어요. 다른 집 노트는 서로 보이지 않아요.
       다만 이 앱을 운영하는 사람(만든 이)은 관리 화면에서 저장된 내용에 접근할 수 있는 구조예요. 필요할 때 말고는 열어 보지 않아요.</p>
-      <p><b>AI는 어떻게 쓰나요</b><br>문제 읽기·비슷한 문제 만들기·다시 풀기를 할 때 사진과 문제 글이 구글 Gemini(AI)로 보내져 처리돼요.</p>
+      <p><b>AI는 어떻게 쓰나요</b><br>문제 읽기·비슷한 문제 만들기·다시 풀기를 할 때 사진과 문제 글이 구글 Gemini(AI)로 보내져 처리돼요.
+      [설정]에서 내 AI 키를 넣었으면 그 키(내 구글 계정)로 처리되고, 키는 이 노트를 함께 쓰는 사람만 볼 수 있게 저장돼요. 무료 키는 구글 약관상 보낸 내용을 구글이 서비스 개선에 쓸 수 있어요.</p>
       <p><b>어디에 저장되나요</b><br>구글 파이어베이스(서울 지역)에 저장돼요.</p>
       <p><b>지우고 싶으면</b><br>[설정] > [이 노트 지우기]를 누르면 노트와 그 안의 문제가 모두 지워져요. 초대받은 가족은 [이 노트에서 나가기]를 누르면 돼요.</p>
       <p class="muted small">문의: 앱을 알려 준 사람에게 연락해 주세요. — 만든 사람: 음악적체육인</p>
@@ -906,6 +1013,7 @@ function cropCanvas(src, box) {
 }
 $("#btnPickOne").onclick = async () => {
   if (!state.photo || state.reading) return;
+  if (!aiReady()) return;
   const box = await cropEditor(state.photo.canvas, null, "읽을 문제 고르기", "고를 문제 하나를 손가락으로 끌어 네모로 감싸 주세요. 문제 번호부터 답 칸까지 넉넉하게 감싸면 좋아요.", "이 문제 읽기");
   if (!box) return;
   state.photo.full = state.photo.full || state.photo.canvas;
@@ -1005,6 +1113,8 @@ function setReadingUI(on) {
 }
 $("#btnRecognize").onclick = async () => {
   if (!state.photo || state.reading) return;
+  if (!aiReady()) return;
+  const wasTrial = aiMode() === "trial";
   askNotifyOnce();
   const t0 = Date.now();
   state.reading = { t0, est: estSec("read"), msg: "사진 읽는 중" };
@@ -1036,6 +1146,13 @@ $("#btnRecognize").onclick = async () => {
       }
     });
     found = probs.length;
+    if (wasTrial && found > 0) {
+      const used = (state.nb.aiTrialUsed || 0) + 1;
+      try { await updateDoc(nbRef(state.nb.id), { aiTrialUsed: used }); } catch (_) {}
+      state.nb.aiTrialUsed = used;
+      const left = trialLeft();
+      setTimeout(() => toast(left ? `무료 체험이 ${left}번 남았어요. 계속 쓰려면 [설정] > [AI 키]에서 내 키를 넣어 주세요` : "무료 체험을 다 썼어요. 다음부터는 [설정] > [AI 키]에서 내 키를 넣어 주세요", 6000), 3500);
+    }
   } catch (e) { logErr("사진 읽기", e); toast(aiErrorText(e), 8000); }
   clearInterval(tick);
   state.reading = null; setReadingUI(false); renderJobChip();
@@ -1107,6 +1224,7 @@ $("#recogResult").addEventListener("click", async (e) => {
     if (e.target.matches("[data-nofig]")) { syncRecog(); Object.assign(p, { figure: "", figurePhoto: "", figureDrawn: "", figureSpecJson: "" }); renderRecog(); return; }
     if (e.target.matches("[data-usefig]")) { syncRecog(); p.useDrawn = e.target.dataset.usefig === "1"; p.figure = p.useDrawn ? p.figureDrawn : p.figurePhoto; renderRecog(); return; }
     if (e.target.matches("[data-resolve]")) {
+      if (!aiReady()) return;
       syncRecog();
       const r = await withResolveBusy(() => solveAgain(p));
       if (r) {
@@ -1360,7 +1478,7 @@ function enqueueSimilar(notes) {
   if (!jobs.running) runJobs();
 }
 async function runJobs() {
-  jobs.running = true;
+  jobs.running = true; inJob = true;
   const tick = setInterval(renderJobChip, 1000);
   while (jobs.queue.length) {
     await whenVisible();
@@ -1396,7 +1514,7 @@ async function runJobs() {
     if (state.view === "print") updatePrintAvail();
     if (state.view === "retry" && !state.retry) updateRetryAvail();
   }
-  jobs.running = false;
+  jobs.running = false; inJob = false;
   clearInterval(tick);
   const made = jobs.made, fails = jobs.fails, err = jobs.lastErr, coached = jobs.coached;
   Object.assign(jobs, { done: 0, made: 0, coached: 0, total: 0, fails: 0, lastErr: null });

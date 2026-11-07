@@ -90,12 +90,30 @@ export function fmtQ(x, how = "auto") {
   return `$${neg}\\frac{${n}}{${d}}$`;
 }
 // "{식}" 또는 "{식|mixed}" 자리를 채우기
+// $…$ 수식 안에 있는 자리는 $ 없이, 밖에 있는 자리는 $…$ 로 감싸 넣기
+//   \frac{1}{2}, \text{ km} 같은 LaTeX 의 {…} 는 건드리지 않음
 function fill(text, vars) {
-  return String(text || "").replace(/\{([^{}]+)\}/g, (_, inner) => {
-    const [e, how] = inner.split("|").map((s) => s.trim());
-    return fmtQ(evalExpr(e, vars), how || "auto");
-  }).replace(/\$\s*\$/g, "");
+  const s = String(text || ""); let out = "", inMath = false;
+  for (let i = 0; i < s.length; i++) {
+    const c = s[i];
+    if (c === "$" && s[i - 1] !== "\\") { inMath = !inMath; out += c; continue; }
+    if (c === "{") {
+      const m = /^\{([^{}]+)\}/.exec(s.slice(i));
+      const before = s.slice(0, i);
+      const latexArg = /(\\[A-Za-z]+\s*|[}^_])$/.test(before);
+      if (m && !latexArg) {
+        const [e, how] = m[1].split("|").map((x) => x.trim());
+        let v = null;
+        try { v = fmtQ(evalExpr(e, vars), how || "auto"); } catch (err) { if (!inMath) throw err; }
+        if (v !== null) { out += inMath ? v.replace(/\$/g, "") : v; i += m[0].length - 1; continue; }
+      }
+    }
+    out += c;
+  }
+  return out.replace(/\$\s*\$/g, "");
 }
+// 채운 글의 수식 표시($)가 짝이 맞는지
+const dollarsOk = (t) => (String(t).replace(/\\\$/g, "").match(/\$/g) || []).length % 2 === 0 && !/\$\$/.test(t);
 // 그림 설계도 안의 "{식}" → 숫자
 function fillFig(v, vars) {
   if (typeof v === "string") {
@@ -121,6 +139,7 @@ function pickVars(tpl, fixed) {
   return vars;
 }
 const okAll = (tpl, vars) => (tpl.when || []).every((c) => { const v = evalExpr(c, vars); return v === true || (isQ(v) && v.n !== 0); });
+export { dollarsOk };
 export function fromTemplate(tpl, fixed = null, tries = 400) {
   for (let i = 0; i < tries; i++) {
     let vars;
@@ -151,7 +170,8 @@ export function checkTemplate(tpl, sameValue) {
     const seen = new Set();
     for (let i = 0; i < 6; i++) {
       const p = fromTemplate(tpl); if (!p) return "조건에 맞는 숫자를 찾지 못했어요";
-      if (/[{}]/.test(p.question.replace(/\\frac\{\d+\}\{\d+\}/g, ""))) return "문제 글에 채우지 못한 자리가 있어요";
+      if (/[{}]/.test(p.question.replace(/\\[A-Za-z]+\s*(\{[^{}]*\})+/g, ""))) return "문제 글에 채우지 못한 자리가 있어요";
+      if (!dollarsOk(p.question) || !dollarsOk(p.explanation)) return "수식 표시($)가 짝이 맞지 않아요";
       seen.add(p.question);
     }
     if (seen.size < 2) return "숫자가 거의 바뀌지 않아요";
@@ -200,7 +220,7 @@ export const TEMPLATE_GUIDE = `"문제 틀"(template) 쓰는 법 — 숫자만 �
 - vars: 바꿀 숫자와 범위. {"a":[2,9],"d":[3,9]} 처럼 [가장 작은 수, 가장 큰 수] (정수만). 간격이 필요하면 [10,90,10].
 - let: 다른 수로 계산해 두는 값(선택). {"s":"a+b"}
 - when: 꼭 지켜야 할 조건 식 목록. 예: ["b<a", "a<d", "gcd(a,d)==1"]. 답이 깔끔하게(학년에 맞게) 나오도록 조건을 충분히 건다.
-- question / explanation: 글 속 숫자 자리에 {식} 을 쓴다. 분수는 {a/d}, 대분수로 보이려면 {a/d|mixed}, 가분수 그대로는 {a/d|frac}.
+- question / explanation: 글 속 숫자 자리에 {식} 을 쓴다. {식} 을 $ 로 감싸지 않는다(앱이 알아서 수식으로 보여 준다). 단위는 그냥 글자로 쓴다(예: "{a/d} km", \\text 쓰지 않기). 분수는 {a/d}, 대분수로 보이려면 {a/d|mixed}, 가분수 그대로는 {a/d|frac}.
   자연수는 {a}, 계산 결과는 {a*b} 처럼. explanation 도 같은 방법으로 단계별 풀이를 쓴다.
 - answer: 정답 계산식(예: "(a-b)/d+c"). format: "mixed"(대분수) | "frac"(분수) | "auto"(자연수면 자연수, 아니면 대분수).
 - 식에 쓸 수 있는 것: + - * / % ( ), < <= > >= == != && ||, gcd lcm min max floor ceil abs round mod isint num den

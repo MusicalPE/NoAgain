@@ -8,7 +8,7 @@ import { getFirestore, collection, doc, addDoc, updateDoc, deleteDoc, getDocs, g
   from "https://www.gstatic.com/firebasejs/12.18.0/firebase-firestore.js";
 import { drawFigure } from "./figure.js";
 import * as CFG from "./config.js";
-import { fromTemplate, checkTemplate, likeness, bankKey, gradeKey, unitGuide, TEMPLATE_GUIDE } from "./bank.js";
+import { fromTemplate, checkTemplate, dollarsOk, likeness, bankKey, gradeKey, unitGuide, TEMPLATE_GUIDE } from "./bank.js";
 import { getAI, getGenerativeModel, GoogleAIBackend } from "https://www.gstatic.com/firebasejs/12.18.0/firebase-ai.js";
 
 // ───────── 작은 도구 ─────────
@@ -1430,7 +1430,7 @@ async function similarFromBank(n, count, items) {
       if (tpls.length) { from = tpls[i % tpls.length]; const t = JSON.parse(from.body); p = fromTemplate(t); if (p) { p.choices = []; p.keyPoint = t.keyPoint || ""; } }
       else { from = fixed[i]; if (!from) break; p = JSON.parse(from.body); }
     } catch (e) { logErr("문제 은행 틀", e); continue; }
-    if (!p || !p.question || have.has(qKey(p.question))) continue;
+    if (!p || !p.question || have.has(qKey(p.question)) || !dollarsOk(p.question)) continue;
     have.add(qKey(p.question));
     const spec = p.figureSpec && typeof p.figureSpec === "object" ? p.figureSpec : null;
     const pic = spec ? drawFigure(spec) : "";

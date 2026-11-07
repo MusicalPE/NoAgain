@@ -22,7 +22,17 @@ const cleanTeX = (s) => String(s ?? "")
 const fixMath = (s) => cleanTeX(s)
   .replace(/(\d+)\s*\\d?frac\{0\}\{\d+\}/g, "$1").replace(/\\d?frac\{0\}\{\d+\}/g, "0")
   .replace(/(^|[^\d/])(\d+)\s+0\s*\/\s*\d+(?![\d/])/g, "$1$2");
-const rich = (s) => esc(fixMath(s)).replace(/\n/g, "<br>");
+// 수식 표시($)가 짝이 안 맞거나 $…$ 안에 한글 문장이 들어가 깨진 글 고치기: $ 를 다 빼고 LaTeX 부분만 다시 $…$ 로
+function mendMath(s) {
+  s = String(s ?? "");
+  if (!s.includes("$")) return s;
+  const segs = s.split(/(?<!\\)\$/);
+  const bad = (segs.length - 1) % 2 === 1 || segs.some((t, i) => i % 2 === 1 && /[가-힣]{2,}/.test(t.replace(/\\text\s*\{[^{}]*\}/g, "")));
+  if (!bad) return s;
+  return s.replace(/(?<!\\)\$/g, "")
+    .replace(/(?:\d+\s*)?(?:\\[A-Za-z]+\s*(?:\{[^{}]*\})*\s*)+/g, (m) => "$" + m.trim() + "$" + (/\s$/.test(m) ? " " : ""));
+}
+const rich = (s) => esc(fixMath(mendMath(s))).replace(/\n/g, "<br>");
 const CIRCLED = "①②③④⑤⑥⑦⑧⑨⑩";
 function typeset(el) {
   if (!el || !window.renderMathInElement) return;

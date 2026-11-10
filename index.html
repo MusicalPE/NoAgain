@@ -186,6 +186,32 @@
 
 <div id="printArea"></div>
 
+<script>
+/* 미리보기(?demo): 파이어베이스 대신 demo/ 의 가짜 모듈을 쓰게 해서, 로그인 없이 지어낸 가족의 오답노트를 보여 줌.
+   app.js 의 파이어베이스 버전을 바꾸면 아래 FB 주소의 버전도 같이 바꿔 주세요. */
+(function () {
+  if (!/[?&]demo(=|&|$)/.test(location.search)) return;
+  var FB = "https://www.gstatic.com/firebasejs/12.18.0/", map = {};
+  ["firebase-app", "firebase-app-check", "firebase-auth", "firebase-firestore", "firebase-ai"].forEach(function (n) { map[FB + n + ".js"] = "./demo/" + n + ".js"; });
+  var im = document.createElement("script"); im.type = "importmap"; im.textContent = JSON.stringify({ imports: map });
+  document.currentScript.after(im);
+  // 이 기기에 저장된 내 설정(이름 · 오류 기록 등)을 건드리지 않게 이 창 안에만 둠
+  var mem = {}, P = Storage.prototype, g = P.getItem, s = P.setItem, r = P.removeItem;
+  P.getItem = function (k) { return this === window.localStorage ? (k in mem ? mem[k] : null) : g.call(this, k); };
+  P.setItem = function (k, v) { if (this === window.localStorage) mem[k] = String(v); else s.call(this, k, v); };
+  P.removeItem = function (k) { if (this === window.localStorage) delete mem[k]; else r.call(this, k); };
+  document.addEventListener("DOMContentLoaded", function () {
+    var bar = document.createElement("div");
+    bar.setAttribute("role", "note");
+    bar.style.cssText = "background:#FFF4D6;color:#5C4510;font-size:13px;line-height:1.55;text-align:center;" +
+      "padding:9px max(16px,env(safe-area-inset-right,0px)) 9px max(16px,env(safe-area-inset-left,0px))";
+    bar.innerHTML = '<style>@media (max-width:640px){.pv-long{display:none}}</style><b style="color:#3F2F08">미리보기</b> · 지어낸 가족의 오답노트예요.' +
+      '<span class="pv-long"> 다시 풀기와 시험지 뽑기는 눌러 볼 수 있고, AI 사진 읽기는 내 노트에서 써 볼 수 있어요. 새로고침하면 처음으로 돌아가요.</span> ' +
+      '<a href="./" style="color:#C2410C;font-weight:700;white-space:nowrap">내 노트 시작하기</a>';
+    document.body.insertBefore(bar, document.body.firstChild);
+  });
+})();
+</script>
 <script type="module" src="app.js"></script>
 </body>
 </html>

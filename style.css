@@ -284,3 +284,9 @@ details.orig summary{cursor:pointer;color:var(--blue)}
   .p-ans{break-inside:avoid;margin:0 0 4mm;font-size:11.5pt}
   .p-foot{font-size:10pt;color:#777;text-align:center;margin-top:8mm;font-family:var(--pen)}
 }
+
+.recog-view .q{font-size:20px;line-height:1.6;margin:6px 0}
+.recog-ans{display:flex;flex-wrap:wrap;gap:6px 18px;margin:6px 0;font-size:18px}
+.recog-ans .ok-ans{color:var(--green,#2e9d5b);font-weight:700}
+.recog-edit{margin-top:8px}
+.recog-edit>summary{cursor:pointer;color:var(--blue,#3b6fd8);font-size:16px;padding:4px 0}

@@ -1190,7 +1190,7 @@ function renderRecog() {
   const box = $("#recogResult");
   if (!state.recog.length) { box.innerHTML = ""; return; }
   const how = state.lastAI ? ` <span class="small">(${state.lastAI.sec}초 · ${esc(state.lastAI.model.replace("gemini-", ""))})</span>` : "";
-  box.innerHTML = `<p class="muted">문제 ${state.recog.length}개를 찾았어요${how}. 틀린 문제에는 미리 체크해 두었어요. 내용을 확인하고 고칠 곳은 고쳐 주세요.</p>` +
+  box.innerHTML = `<p class="muted">문제 ${state.recog.length}개를 찾았어요${how}. 틀린 문제에는 미리 체크해 두었어요. 잘못 읽은 곳이 있으면 [내용 고치기]를 눌러 고쳐 주세요.</p>` +
     (state.recog.length > 1 ? `<div class="row pick-all"><span class="small">저장할 문제:</span>
       <button class="btn sm" data-pickall="wrong">틀린 문제만</button><button class="btn sm" data-pickall="all">모두 고르기</button><button class="btn sm ghost" data-pickall="none">모두 빼기</button></div>` : "") +
     state.recog.map((p, i) => (p._i = i, `<div class="card recog ${p.keep ? "" : "notwrong"}" data-i="${i}">
@@ -1200,8 +1200,9 @@ function renderRecog() {
         ${p.graded === false && p.myAnswer ? `<span class="tag ai">채점 표시 없음 · AI가 판단</span>` : ""}
         ${p.answerFromAI ? `<span class="tag ai">정답은 AI가 풂</span>` : ""}
       </div>
-      ${editFormHTML(p, "r" + i)}
+      <div class="recog-view" data-view>${recogView(p)}</div>
       <div data-figbox>${figBlock(p)}</div>
+      <details class="recog-edit"><summary>내용 고치기</summary>${editFormHTML(p, "r" + i)}</details>
       <div class="row" style="margin-top:6px">
         <button class="btn sm" data-crop>${p.figure ? "그림 다시 자르기" : "그림 잘라 넣기"}</button>
         ${p.figure ? `<button class="btn sm ghost" data-nofig>그림 빼기</button>` : ""}
@@ -1212,8 +1213,24 @@ function renderRecog() {
       <label class="chk"><input type="checkbox" id="optSimilar" checked> 저장하면서 문제마다 비슷한 문제 ${SIMILAR_COUNT}개씩 만들기</label>
       <button class="btn red big" id="btnSaveRecog">체크한 문제 저장</button>
     </div>`;
-  box.querySelectorAll(".recog").forEach((card) => wirePreview(card.querySelector(".edit")));
+  box.querySelectorAll(".recog").forEach((card) => {
+    const ed = card.querySelector(".edit"); wirePreview(ed);
+    // 고친 내용을 위쪽 보기에 바로 반영
+    ed.addEventListener("input", () => {
+      clearTimeout(ed._v); ed._v = setTimeout(() => { const v = card.querySelector("[data-view]"); v.innerHTML = recogView(readForm(ed)); typeset(v); }, 350);
+    });
+  });
   typeset(box);
+}
+// 읽은 문제를 저장 뒤와 같은 모양으로 보여 주기
+function recogView(p) {
+  return `<div class="q">${rich(p.question)}</div>
+    ${choicesHTML(p.choices)}
+    <p class="recog-ans">${p.myAnswer ? `<span>내 답: ${rich(p.myAnswer)}</span>` : ""}
+      ${p.correctAnswer ? `<span class="ok-ans">정답: ${rich(p.correctAnswer)}</span>` : ""}</p>
+    ${p.wrongReason || p.explanation ? `<details class="exp"><summary>${p.wrongReason ? "틀린 이유와 풀이" : "풀이"}</summary>
+      ${p.wrongReason ? `<p><b>틀린 이유</b><br>${rich(p.wrongReason)}</p>` : ""}
+      ${p.explanation ? `<p><b>풀이</b><br>${rich(p.explanation)}</p>` : ""}</details>` : ""}`;
 }
 // 사진에서 읽은 그림: 원래 사진 조각 + (그릴 수 있으면) 깨끗하게 다시 그린 그림
 function pickFigure(p) {

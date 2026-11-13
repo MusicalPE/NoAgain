@@ -1,4 +1,6 @@
 // 또싫 (오답노트) — 음악적체육인
+// 판 번호: 고칠 때마다 올리기 (sw.js 의 VERSION, index.html 의 app-version 과 같아야 함 → tests/check.mjs 가 확인)
+export const APP_VERSION = "1.9.0";
 import { FIREBASE_CONFIG, RECAPTCHA_SITE_KEY, AI_MODELS, AI_MODELS_FAST, SUBJECTS, SIMILAR_COUNT, APP_NAME, APP_SUBTITLE, SUBJECT_COLORS } from "./config.js";
 import { initializeApp } from "https://www.gstatic.com/firebasejs/12.18.0/firebase-app.js";
 import { initializeAppCheck, ReCaptchaEnterpriseProvider, getToken as getAppCheckToken } from "https://www.gstatic.com/firebasejs/12.18.0/firebase-app-check.js";
@@ -802,6 +804,7 @@ function openSettings() {
       <button class="btn" id="sPrivacy">개인정보 안내</button>
       ${isOwner ? `<button class="btn ghost" id="sNew">새 노트 만들기</button><button class="btn ghost" id="sDelete">이 노트 지우기</button>` : `<button class="btn ghost" id="sLeave">이 노트에서 나가기</button>`}
       <button class="btn ghost" id="sClose">닫기</button>
+      <p class="muted small" style="margin-top:10px">판 ${APP_VERSION}</p>
     </div>`);
   $("#sClose").onclick = closeModal;
   $("#sOut").onclick = async () => { closeModal(); state.notes = []; state.retry = null; state.nb = null; await signOut(auth); };

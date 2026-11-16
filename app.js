@@ -1,6 +1,6 @@
 // 또싫 (오답노트) — 음악적체육인
 // 판 번호: 고칠 때마다 올리기 (sw.js 의 VERSION, index.html 의 app-version 과 같아야 함 → tests/check.mjs 가 확인)
-export const APP_VERSION = "1.10.0";
+export const APP_VERSION = "2.0.0";
 import { FIREBASE_CONFIG, RECAPTCHA_SITE_KEY, AI_MODELS, AI_MODELS_FAST, SUBJECTS, SIMILAR_COUNT, APP_NAME, APP_SUBTITLE, SUBJECT_COLORS } from "./config.js";
 import { initializeApp } from "https://www.gstatic.com/firebasejs/12.18.0/firebase-app.js";
 import { initializeAppCheck, ReCaptchaEnterpriseProvider, getToken as getAppCheckToken } from "https://www.gstatic.com/firebasejs/12.18.0/firebase-app-check.js";

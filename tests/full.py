@@ -14,7 +14,7 @@ const store = window.__store = { bank: [], notes: [
  {id:"a",subject:"수학",unit:"분수의 덧셈과 뺄셈",type:"문장제",question:"우체국에서 병원까지 $\frac{13}{5}$ km, 병원에서 동물원까지 $\frac{4}{5}$ km 입니다. 우체국에서 동물원까지는?",choices:[],myAnswer:"3 2/5",correctAnswer:"$3\frac{2}{5}$ km",explanation:"13/5+4/5=17/5",wrongReason:"",figure:"",source:"photo",answerFromAI:true,aiJudged:true,status:"wrong",wrongCount:1,createdAt:Date.parse("2026-10-20"),parentId:""},
  {id:"b",subject:"과학",unit:"식물",type:"개념",question:"식물이 빛을 받아 양분을 만드는 과정은?",choices:["호흡","광합성","증산","발아"],myAnswer:"①",correctAnswer:"②",explanation:"광합성",figure:"",source:"ai",parentId:"a",status:"wrong",wrongCount:0,createdAt:Date.parse("2026-03-05")},
  {id:"c",subject:"국어",unit:"낱말",type:"맞춤법",question:"바르게 쓴 것을 고르세요.",choices:["설겆이","설거지"],myAnswer:"①",correctAnswer:"②",figure:"",source:"photo",status:"wrong",wrongCount:1,createdAt:Date.parse("2026-04-10")}]};
-store.nbs = [{id:"nb1",name:"시험 노트",owner:"u1",members:["u1","u2"],names:{u1:"시험",u2:"아이"},grade:"초등 4학년",kid:"지민",kidAsked:true,aiTrialUsed:trialDone?3:0,createdAt:1}];
+store.nbs = [{id:"nb1",name:"시험 노트",owner:"u1",members:["u1","u2"],names:{u1:"시험",u2:"아이"},grade:location.search.includes("middle")?"중학교 2학년":"초등 4학년",kid:"지민",kidAsked:true,aiTrialUsed:trialDone?3:0,createdAt:1}];
 let n = 0;
 export const getFirestore=()=>({});export const collection=(...a)=>a.join("/");export const doc=(...a)=>a.join("/");
 export const query=(c)=>c;export const orderBy=()=>0;export const where=()=>0;export const limit=()=>0;
@@ -29,8 +29,10 @@ export const deleteDoc=async(p)=>{const id=String(p).split("/").pop(); store.not
 '''
 AI = r'''
 export const getAI=()=>({});export class GoogleAIBackend{};
-export const getGenerativeModel=(a,o)=>({generateContent:async(parts)=>{const p=String(parts[0]); window.__ai=(window.__ai||0)+1; let out;
-if(p.includes("연습 문제를 내 주는")) out={skill:"분모가 같은 분수 거리 문장제",problems:[
+export const getGenerativeModel=(a,o)=>({generateContent:async(parts)=>{const p=String(parts[0]); window.__ai=(window.__ai||0)+1; (window.__prompts=window.__prompts||[]).push(p); let out;
+if(p.includes("해답지(정답")) out={answers:[{i:1,found:true,answer:window.__key||"$2\\frac{3}{5}$",explanation:""}]};
+else if(p.includes("다른 사람이 쓴 답은 보여 주지 않는다")) out={work:"x",correctAnswer:window.__alt||"$3\\frac{2}{5}$"};
+else if(p.includes("연습 문제를 내 주는")) out={skill:"분모가 같은 분수 거리 문장제",problems:[
   {question:"집에서 학교까지 $\\frac{13}{5}$ km, 학교에서 공원까지 $\\frac{4}{5}$ km 입니다. 집에서 공원까지는?",choices:[],explanation:"13/5+4/5=17/5",correctAnswer:"$3\\frac{2}{5}$"},
   {question:"둘째 문제",choices:[],explanation:"x",correctAnswer:"2"}],
   template:{vars:{a:[6,20],b:[1,8],d:[3,9]},when:["b<d","a>d"],question:"집에서 학교까지 {a/d|frac} km, 학교에서 공원까지 {b/d} km 입니다. 집에서 공원까지는?",explanation:"{a/d|frac} + {b/d} = {(a+b)/d|mixed}",answer:"(a+b)/d",format:"mixed",example:{a:13,b:4,d:5}}};
@@ -185,7 +187,61 @@ async def main():
       await pg.locator('.note[data-id="c"] [data-act=del]').click(); await pg.wait_for_timeout(600)
       step('문제 지우기', await S('window.__store.notes.length') == n0 - 1)
     await safe('문제 지우기', t9)
+    # 9-1. 식 읽는 규칙이 AI 안내에 들어가는지
+    async def t9a():
+      ps = await S('window.__prompts||[]')
+      step('식 읽는 규칙(16÷2(2+2)=2)이 AI 안내에 들어감', len(ps) > 0 and all('16÷2(2+2) = 16÷8 = 2' in x for x in ps if ('problems' in x or '연습 문제' in x)), f'안내 {len(ps)}개')
+    await safe('식 읽는 규칙', t9a)
+
+    # 9-2. 카드에서 해답지 사진으로 정답 넣기
+    async def t9b():
+      await S('window.__key="$3\\frac{2}{5}$"')
+      b0 = pg.locator('.note[data-id="b"] [data-act=key]')
+      async with pg.expect_file_chooser() as fc: await b0.click()
+      await (await fc.value).set_files(SAMPLE); await pg.wait_for_timeout(2500)
+      nb = await S('(()=>{const x=window.__store.notes.find(v=>v.id==="b"); return [x.correctAnswer,x.answerFromKey]})()')
+      txt = await pg.locator('.note[data-id="b"] .right').inner_text()
+      step('카드에서 해답지 사진으로 정답 넣기', nb[1] is True and '해답지' in txt, str(nb))
+    await safe('카드 해답지', t9b)
     errs1 = list(pg.errs); await pg.close()
+
+    # 9-3. 사진 읽기 화면에서 해답지로 한꺼번에 다시 채점
+    async def t9c():
+      pr = await open_page(b, 'http://app/')
+      await pr.click('#tabs [data-view=capture]'); await pr.wait_for_timeout(300)
+      await pr.set_input_files('#inGallery', SAMPLE); await pr.wait_for_timeout(1200)
+      await pr.click('#btnRecognize'); await pr.wait_for_timeout(3000)
+      await pr.evaluate('window.__key="$2$"')
+      async with pr.expect_file_chooser() as fc: await pr.click('#btnRecogKey')
+      await (await fc.value).set_files(SAMPLE); await pr.wait_for_timeout(2000)
+      head = await pr.locator('.recog .note-head').first.inner_text()
+      step('사진 읽기 화면: 해답지로 다시 채점', '정답은 해답지' in head and '맞은 문제' in head, head.replace('\n', ' ')[:60])
+      errs1.extend(pr.errs); await pr.close()
+    await safe('읽기 화면 해답지', t9c)
+
+    # 9-4. 중학생 노트: 두 번 풀어 답이 다르면 "확실하지 않아요"
+    async def t9d():
+      pm = await open_page(b, 'http://app/?middle')
+      await pm.evaluate('window.__alt="5"')
+      await pm.locator('.note[data-id="a"] [data-act=similar]').click(); await pm.wait_for_timeout(4000)
+      uns = await pm.evaluate('window.__store.notes.filter(x=>x.answerUnsure).length')
+      bank = await pm.evaluate('window.__store.bank.length')
+      vis = await pm.locator('.unsure').count()
+      step('중학생: 두 번 푼 답이 다르면 확실하지 않음 표시', uns > 0 and vis > 0, f'표시 {vis}개')
+      step('중학생: 확인 안 된 문제 틀은 은행에 넣지 않음', bank == 0, f'은행 {bank}개')
+      # 연습 문제 하나를 풀어 답을 보이게 한 뒤 정답 고르기
+      card = pm.locator('.note:has(.unsure)').first; cid = await card.get_attribute('data-id')
+      box = card.locator('.ans-box'); mode = await box.get_attribute('data-mode')
+      if mode == 'choice': await box.locator('[data-ch="0"]').click()
+      elif mode == 'frac': await box.locator('.fw').fill('1'); await box.locator('.fn').fill('1'); await box.locator('.fd').fill('2')
+      else: await box.locator('.answer-in').fill('1')
+      await card.locator('[data-act=check]').click(); await pm.wait_for_timeout(800)
+      c2 = pm.locator(f'.note[data-id="{cid}"]')
+      await c2.locator('[data-act=pickans][data-v="1"]').click(); await pm.wait_for_timeout(800)
+      st = await pm.evaluate(f'(()=>{{const x=window.__store.notes.find(v=>v.id==="{cid}"); return [x.answerUnsure,x.correctAnswer]}})()')
+      step('확실하지 않을 때 정답 고르기', st[0] is False and st[1] == '5', str(st))
+      errs1.extend(pm.errs); await pm.close()
+    await safe('중학생 두 번 확인', t9d)
 
     # 10. 무료 체험 끝 → AI 키 넣기 → 내 키로 AI 부르기
     async def t10():

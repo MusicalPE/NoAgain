@@ -1,6 +1,6 @@
 // 또싫 (오답노트) — 음악적체육인
 // 판 번호: 고칠 때마다 올리기 (sw.js 의 VERSION, index.html 의 app-version 과 같아야 함 → tests/check.mjs 가 확인)
-export const APP_VERSION = "1.9.1";
+export const APP_VERSION = "1.10.0";
 import { FIREBASE_CONFIG, RECAPTCHA_SITE_KEY, AI_MODELS, AI_MODELS_FAST, SUBJECTS, SIMILAR_COUNT, APP_NAME, APP_SUBTITLE, SUBJECT_COLORS } from "./config.js";
 import { initializeApp } from "https://www.gstatic.com/firebasejs/12.18.0/firebase-app.js";
 import { initializeAppCheck, ReCaptchaEnterpriseProvider, getToken as getAppCheckToken } from "https://www.gstatic.com/firebasejs/12.18.0/firebase-app-check.js";
@@ -564,12 +564,16 @@ function noteCard(n) {
     <div class="q">${rich(n.question)}</div>
     ${n.figure ? `<img class="fig" src="${n.figure}" alt="문제 그림">` : ""}
     ${n.figurePhoto ? `<details class="orig"><summary>원래 사진 보기</summary><img class="fig" src="${n.figurePhoto}" alt="원래 사진"></details>` : ""}
+    ${practice && n.answerUnsure && !n.answerFromKey ? `<div class="unsure small">AI가 두 번 풀었더니 답이 달랐어요. 답을 확인한 뒤 교과서나 해답지로 한 번 더 봐 주세요.</div>` : ""}
     ${practice ? `<div class="practice">${answerBoxHTML(n)}
       <div class="row" style="margin-top:8px"><button class="btn red" data-act="check">답 확인</button><span class="muted small">답을 써야 정답과 풀이가 보여요</span></div></div>` : `${choicesHTML(n.choices)}
     <div class="ans">
       ${n.myAnswer ? `<div class="mine ${mineOk ? "ok" : ""}">내 답: ${rich(n.myAnswer)}</div>` : ""}
-      <div class="right">정답: ${rich(n.correctAnswer || "(없음)")}${n.answerFromAI ? ` <span class="muted small">(AI가 푼 답)</span>` : ""}</div>
+      <div class="right">정답: ${rich(n.correctAnswer || "(없음)")}${n.answerFromKey ? ` <span class="muted small">(해답지)</span>` : n.answerFromAI ? ` <span class="muted small">(AI가 푼 답${n.answerChecked ? " · 두 번 확인" : ""})</span>` : ""}</div>
     </div>
+    ${n.answerUnsure && !n.answerFromKey ? `<div class="unsure"><b>AI 답이 확실하지 않아요.</b> 두 번 풀었더니 답이 달랐어요: ${rich(n.correctAnswer)} / ${rich(n.altAnswer || "?")}<br>교과서나 해답지로 확인해 주세요.
+      <div class="row" style="margin-top:6px"><button class="btn sm" data-act="key">해답지 사진으로 정답 넣기</button>
+      <button class="btn sm ghost" data-act="pickans" data-v="0">앞의 답이 맞아요</button><button class="btn sm ghost" data-act="pickans" data-v="1">뒤의 답이 맞아요</button></div></div>` : ""}
     ${n.wrongReason || n.explanation ? `<details class="exp"><summary>${n.wrongReason && !mineOk ? "틀린 이유와 풀이" : "풀이"}</summary>
       ${n.wrongReason && !mineOk ? `<p><b>틀린 이유</b><br>${rich(n.wrongReason)}</p>` : ""}
       ${n.explanation ? `<p><b>풀이</b><br>${rich(n.explanation)}</p>` : ""}
@@ -580,6 +584,7 @@ function noteCard(n) {
     <div class="note-actions">
       <button class="btn sm" data-act="similar">비슷한 문제 ${SIMILAR_COUNT}개 더</button>
       ${!practice ? `<button class="btn sm" data-act="resolve">AI 다시 풀기</button>` : ""}
+      ${!practice && !n.answerUnsure ? `<button class="btn sm" data-act="key">해답지로 정답</button>` : ""}
       <button class="btn sm" data-act="toggle">${n.status === "mastered" ? "다시 틀림으로" : "익힘으로"}</button>
       <button class="btn sm" data-act="edit">고치기</button>
       <button class="btn sm ghost" data-act="del">지우기</button>
@@ -689,6 +694,22 @@ $("#noteList").addEventListener("click", async (e) => {
   if (act === "del") {
     if (!confirm("이 문제를 지울까요?")) return;
     await removeNote(id); renderList(); toast("지웠어요");
+  } else if (act === "pickans") {
+    const v = e.target.dataset.v === "1" ? n.altAnswer : n.correctAnswer;
+    await patchNote(id, { correctAnswer: v, answerUnsure: false, altAnswer: "", answerChecked: true, answerFromAI: false, answerByUser: true, needsCoach: true });
+    enqueueCoach(state.notes.find((x) => x.id === id)); renderList(); toast("정답을 정했어요. 풀이를 이 답에 맞춰 다시 써요");
+  } else if (act === "key") {
+    if (!aiReady()) return;
+    const img = await pickImage(); if (!img) return;
+    toast("해답지에서 정답을 찾는 중…", 20000);
+    try {
+      const [a] = await readAnswerKey(img, [{ number: n.number, question: n.question }]);
+      if (!a) { toast("해답지에서 이 문제를 찾지 못했어요. 이 문제 번호가 보이게 찍어 주세요", 6000); return; }
+      const kidOk = !!n.myAnswer && judgeAnswer({ correctAnswer: a.answer }, { cands: [n.myAnswer] });
+      await patchNote(id, { correctAnswer: a.answer, answerFromKey: true, answerFromAI: false, answerUnsure: false, altAnswer: "", ...(a.explanation ? { explanation: a.explanation } : {}), needsCoach: true, ...(kidOk ? { myAnswerOk: true, wrongReason: "" } : {}) });
+      enqueueCoach(state.notes.find((x) => x.id === id));
+      renderList(); toast(`해답지 정답: ${a.answer.replace(/\$/g, "")} · 풀이를 이 답에 맞춰 다시 써요`, 5000);
+    } catch (err) { logErr("해답지 읽기", err); toast(aiErrorText(err), 6000); }
   } else if (act === "badbank") {
     if (!confirm("문제 은행에 \"이상한 문제\"로 알리고 이 문제를 지울까요?\n(두 사람 이상 알리면 은행에서 더는 나오지 않아요)")) return;
     try { await updateDoc(doc(db, "bank", n.fromBank), { reporters: arrayUnion(state.user.uid) }); } catch (e) { logErr("문제 은행 알리기", e); }
@@ -767,6 +788,8 @@ function openEdit(n) {
   $("#mCancel").onclick = closeModal;
   $("#mSave").onclick = async () => {
     const data = readForm(root);
+    // 정답을 직접 고쳤으면 그 답을 정답으로 굳히기 (AI가 다시 바꾸지 않게)
+    if (normAnswer(data.correctAnswer) !== normAnswer(n.correctAnswer)) Object.assign(data, { answerByUser: true, answerFromAI: false, answerUnsure: false, altAnswer: "" });
     if ($("#mDropFig")?.checked) { data.figure = ""; data.figureSpec = ""; }
     try { await patchNote(n.id, data); closeModal(); renderList(); toast("저장했어요"); }
     catch (e) { toast("저장하지 못했어요: " + (e.code || e.message)); }
@@ -1050,7 +1073,11 @@ $("#btnUncrop").onclick = () => {
 $("#btnClearPhoto").onclick = () => { state.photo = null; state.recog = []; $("#photoPreview").classList.add("hidden"); $("#recogResult").innerHTML = ""; };
 
 // 틀린 이유·풀이·기억할 점 쓰는 법 (풀이 다듬기에서 씀)
-const GUIDE_COACH = `【틀린 이유(wrongReason) 쓰는 법】 아이에게 말하듯 해요체로 2~3문장.
+// 식 읽는 규칙: 우리나라 교과서 관례 (AI는 미국식으로 앞에서부터 계산해 다른 답을 낼 때가 있음)
+const MATH_RULE = `【식 읽는 규칙 — 우리나라 교과서 관례】 ① 괄호 ② 곱셈 기호를 생략한 곱(2(2+2), 2a, 3(x+1), 4ab)은 한 덩어리로 먼저 ③ ×·÷ 는 앞에서부터 ④ +·− 는 앞에서부터.
+   예: 16÷2(2+2) = 16÷8 = 2,  6x÷2x = 3,  8÷2×4 = 16`;
+const GUIDE_COACH = MATH_RULE + `
+   【틀린 이유(wrongReason) 쓰는 법】 아이에게 말하듯 해요체로 2~3문장.
    - 학생 답과 학생의 계산 흔적(studentWork)을 정답 풀이와 한 단계씩 맞대어, 정확히 어느 단계에서 무엇을 어떻게 했는지 짚는다.
      예: "분자 3+2=5는 맞게 더했는데, 분모도 5+5=10으로 더해서 4와 10분의 5가 됐어요. 분모가 같은 분수끼리 더할 때 분모는 그대로 두고 분자만 더해요."
    - 흔적이 없어 확실하지 않으면 학생 답에서 거꾸로 추리하고 "~했을 수 있어요"로 쓴다. 틀린 계산을 지어내지 않는다.
@@ -1075,6 +1102,7 @@ function recognizePrompt() {
   return `너는 학생의 오답노트를 정리해 주는 친절한 선생님이다. 사진은 학생이 푼 시험지·문제집·학습지다.
 학생 학년: ${grade() || "모름(사진을 보고 짐작)"}
 ${unitGuide(grade())}
+${MATH_RULE}
 할 일
 0. 사진이 옆으로 눕거나 거꾸로 찍혔을 수 있다. 글자 방향을 보고 머릿속으로 바로 세워서 읽는다.
    사진을 바로 세우려면 시계 방향으로 몇 도 돌려야 하는지 rotate 에 0, 90, 180, 270 중 하나로 적는다.
@@ -1201,7 +1229,7 @@ function renderRecog() {
         <label class="chk" style="margin:0"><input type="checkbox" data-keep ${p.keep ? "checked" : ""}> <b>${esc(p.number || i + 1)}번 저장</b></label>
         ${p.isWrong === false ? `<span class="tag ok">맞은 문제</span>` : `<span class="tag wrong">틀린 문제</span>`}
         ${p.graded === false && p.myAnswer ? `<span class="tag ai">채점 표시 없음 · AI가 판단</span>` : ""}
-        ${p.answerFromAI ? `<span class="tag ai">정답은 AI가 풂</span>` : ""}
+        ${p.answerFromKey ? `<span class="tag ok">정답은 해답지</span>` : p.answerFromAI ? `<span class="tag ai">정답은 AI가 풂</span>` : ""}
       </div>
       <div class="recog-view" data-view>${recogView(p)}</div>
       <div data-figbox>${figBlock(p)}</div>
@@ -1212,10 +1240,28 @@ function renderRecog() {
         <button class="btn sm" data-resolve>AI 다시 풀기</button>
       </div>
     </div>`)).join("") +
-    `<div class="save-bar">
+    `<div class="row key-bar"><button class="btn" id="btnRecogKey">해답지 사진으로 정답 맞추기</button><span class="muted small">문제집 해답지를 찍으면 AI 답 대신 해답지 답으로 채점해요</span></div>
+    <div class="save-bar">
       <label class="chk"><input type="checkbox" id="optSimilar" checked> 저장하면서 문제마다 비슷한 문제 ${SIMILAR_COUNT}개씩 만들기</label>
       <button class="btn red big" id="btnSaveRecog">체크한 문제 저장</button>
     </div>`;
+  $("#btnRecogKey").onclick = async () => {
+    if (!aiReady()) return;
+    syncRecog();
+    const img = await pickImage(); if (!img) return;
+    const kb = $("#btnRecogKey"); kb.disabled = true; kb.textContent = "해답지 읽는 중…";
+    try {
+      const found = await readAnswerKey(img, state.recog.map((p) => ({ number: p.number, question: p.question })));
+      let n = 0;
+      found.forEach((a, i) => {
+        if (!a) return; const p = state.recog[i]; n++;
+        Object.assign(p, { correctAnswer: a.answer, answerFromKey: true, answerFromAI: false, ...(a.explanation ? { explanation: a.explanation } : {}) });
+        if (p.myAnswer) { const ok = judgeAnswer({ correctAnswer: a.answer }, { cands: [p.myAnswer] }); p.isWrong = !ok; p.keep = !ok; if (ok) p.wrongReason = ""; }
+      });
+      renderRecog();
+      toast(n ? `해답지에서 ${n}문제 정답을 찾아 다시 채점했어요` + (n < state.recog.length ? ` (${state.recog.length - n}문제는 못 찾음)` : "") : "해답지에서 문제를 찾지 못했어요. 문제 번호가 보이게 찍어 주세요", 6000);
+    } catch (e) { logErr("해답지 읽기", e); toast(aiErrorText(e), 6000); kb.disabled = false; kb.textContent = "해답지 사진으로 정답 맞추기"; }
+  };
   box.querySelectorAll(".recog").forEach((card) => {
     const ed = card.querySelector(".edit"); wirePreview(ed);
     // 고친 내용을 위쪽 보기에 바로 반영
@@ -1309,6 +1355,7 @@ async function saveRecog() {
         myAnswer: p.myAnswer || "", correctAnswer: p.correctAnswer || "", answerFromAI: !!p.answerFromAI,
         wrongReason: p.wrongReason || "", explanation: p.explanation || "", figure: p.figure || "", figurePhoto: p.figurePhoto && p.figure !== p.figurePhoto ? p.figurePhoto : "", figureSpec: p.useDrawn && p.figureDrawn ? p.figureSpecJson : "", source: "photo", aiJudged: p.graded === false,
         studentWork: p.studentWork || "", keyPoint: p.keyPoint || "", needsCoach: p.isWrong !== false, needsSimilar: withSimilar && p.isWrong !== false,
+        number: String(p.number || ""), answerFromKey: !!p.answerFromKey,
         status: p.isWrong === false ? "mastered" : "wrong", wrongCount: p.isWrong === false ? 0 : 1
       });
       saved++; savedNotes.push(note);
@@ -1353,6 +1400,7 @@ async function solveAgain(n) {
   const prompt = `너는 초등학교 선생님이다. 아래 문제를 처음부터 아주 꼼꼼히 다시 푼다. 앞서 누가 쓴 답은 틀렸을 수 있으니 믿지 않는다.
 학생 학년: ${grade() || "모름"}
 - 그림이 있으면 그림을 먼저 정확히 읽는다. 수직선은 큰 눈금 사이가 몇 칸인지, 화살표가 몇 번째 눈금인지 센다.
+- ${MATH_RULE}
 - 다 푼 뒤 검산한다. 정답은 하나만, 초등 교과서 표기로 쓴다(분자가 0이면 자연수). 수식은 LaTeX 를 $...$ 로 감싼다.
 - explanation 은 학생 눈높이의 단계별 최종 풀이만 쓴다(고쳐 생각한 흔적 쓰지 않기). 풀이 끝의 답과 correctAnswer 가 같아야 한다.
 - 학생 답이 있으면 값이 같은지 비교해 studentCorrect 에 true/false. 틀렸으면 wrongReason 에 왜 틀렸을지 한두 문장.
@@ -1386,6 +1434,7 @@ async function resolveNote(n) {
   const pic = drawn && photoOf(n) ? { figure: drawn, figurePhoto: photoOf(n), figureSpec: specJson } : {};
   await patchNote(n.id, {
     correctAnswer: ans, explanation, answerFromAI: true, wrongReason, myAnswerOk: okKid, keyPoint, needsCoach: false, ...pic,
+    answerFromKey: false, answerByUser: false, answerUnsure: false, altAnswer: "",
     ...(okKid && n.aiJudged && !n.tryCount && n.status !== "mastered" ? { status: "mastered", wrongCount: 0, needsSimilar: false } : {})
   });
   return msg;
@@ -1401,6 +1450,59 @@ async function withResolveBusy(fn) {
 }
 
 // 풀이 다듬기: 꼼꼼한 모델이 시간을 들여 틀린 이유·풀이·기억할 점을 다시 쓰기
+// 해답지 사진에서 정답 찾기: items = [{number, question}], 돌려주기 = [{answer, explanation}|null]
+function pickImage() {
+  return new Promise((res) => {
+    const inp = document.createElement("input"); inp.type = "file"; inp.accept = "image/*";
+    inp.onchange = async () => { const f = inp.files[0]; if (!f) return res(null); try { res(imageToCanvas(await loadImage(f), 1800).toDataURL("image/jpeg", 0.85)); } catch (_) { res(null); } };
+    inp.click();
+  });
+}
+async function readAnswerKey(img, items) {
+  const prompt = `해답지(정답·풀이가 적힌 페이지) 사진이다. 아래 문제마다 해답지에서 정답을 찾아 그대로 옮긴다.
+- 문제 번호가 있으면 번호로, 없으면 문제 내용으로 찾는다. 해답지에 없으면 found:false.
+- 정답은 해답지에 적힌 그대로(수식은 LaTeX 를 $...$ 로). 직접 풀어서 지어내지 않는다.
+- 해답지에 풀이가 있으면 explanation 에 옮기고, 없으면 "".
+
+찾을 문제:
+${items.map((it, i) => `${i + 1}) 번호: ${it.number || "모름"} / 문제: ${String(it.question || "").slice(0, 160)}`).join("\n")}
+
+JSON 하나만: {"answers":[{"i":1,"found":true,"answer":"","explanation":""}]}`;
+  const out = await askAI([prompt, { inlineData: { data: img.split(",")[1], mimeType: "image/jpeg" } }], 0.1, null, AI_MODELS_FAST, { think: 2048, timeout: 120000 });
+  const list = Array.isArray(out?.answers) ? out.answers : [];
+  return items.map((_, i) => { const a = list.find((x) => +x.i === i + 1) || list[i]; return a && a.found !== false && a.answer ? { answer: fixMath(String(a.answer)), explanation: String(a.explanation || "") } : null; });
+}
+
+// 중학생 이상이면 AI 답을 한 번 더 따로 풀어 비교 (어려울수록 AI가 틀릴 수 있어서)
+const answerFixed = (n) => !!(n.answerFromKey || n.answerByUser);
+const isSecondary = () => /^[중고]/.test(gradeKey(grade()));
+async function solveCheck(n, ref) {
+  const prompt = `너는 꼼꼼한 수학·과목 선생님이다. 아래 문제를 처음부터 혼자 풀어 정답만 확인한다. 다른 사람이 쓴 답은 보여 주지 않는다.
+학생 학년: ${grade() || "모름"}
+${MATH_RULE}
+- 다 푼 뒤 검산한다. 정답은 하나만, 교과서 표기로. 수식은 LaTeX 를 $...$ 로.
+
+문제: ${n.question}
+보기: ${(n.choices || []).join(" | ") || "없음"}
+${n.figureSpec ? "그림 설계도: " + (typeof n.figureSpec === "string" ? n.figureSpec : JSON.stringify(n.figureSpec)) : photoOf(n) ? "(그림은 함께 보낸 사진)" : ""}
+
+JSON 하나만: {"work":"짧은 풀이","correctAnswer":""}`;
+  const parts = [prompt];
+  const photo = photoOf(n); if (photo) parts.push({ inlineData: { data: photo.split(",")[1], mimeType: "image/jpeg" } });
+  const out = await askAI(parts, 0.2, null, AI_MODELS, { think: 6144, timeout: 120000 });
+  const alt = out && out.correctAnswer ? fixMath(String(out.correctAnswer)) : "";
+  if (!alt) return null;
+  const same = judgeAnswer({ correctAnswer: ref }, { cands: [alt] }) || judgeAnswer({ correctAnswer: alt }, { cands: [ref] });
+  return { same, alt };
+}
+async function checkNote(n, ref) {
+  if (!isSecondary() || answerFixed(n)) return;
+  try {
+    const r = await solveCheck(n, ref); if (!r) return;
+    await patchNote(n.id, r.same ? { answerChecked: true, answerUnsure: false, altAnswer: "" } : { answerUnsure: true, altAnswer: r.alt, answerChecked: false });
+  } catch (e) { logErr("답 한 번 더 확인", e); }
+}
+
 async function coachNote(n) {
   const prompt = `너는 아이의 오답을 함께 봐 주는 다정하고 꼼꼼한 초등학교 선생님이다.
 학생 학년: ${grade() || "모름"}
@@ -1410,7 +1512,7 @@ ${GUIDE_COACH}
 문제: ${n.question}
 보기: ${(n.choices || []).join(" | ") || "없음"}
 ${n.figureSpec ? "그림 설계도: " + (typeof n.figureSpec === "string" ? n.figureSpec : JSON.stringify(n.figureSpec)) : photoOf(n) ? "(그림은 함께 보낸 사진)" : ""}
-지금 적힌 정답: ${n.correctAnswer || "없음"} (틀렸을 수 있으니 직접 풀어 확인)
+${answerFixed(n) ? `정답(${n.answerFromKey ? "해답지에서" : "선생님·보호자가"} 확인함): ${n.correctAnswer} — 이 정답은 바꾸지 말고, 이 답이 나오도록 풀이를 쓴다.` : `지금 적힌 정답: ${n.correctAnswer || "없음"} (틀렸을 수 있으니 직접 풀어 확인)`}
 학생 답: ${n.myAnswer || "없음"}
 학생의 계산 흔적: ${n.studentWork || "없음"}
 
@@ -1420,8 +1522,8 @@ ${n.figureSpec ? "그림 설계도: " + (typeof n.figureSpec === "string" ? n.fi
   const photo = photoOf(n); if (photo) parts.push({ inlineData: { data: photo.split(",")[1], mimeType: "image/jpeg" } });
   const out = await askAI(parts, 0.3, null, AI_MODELS, { think: 6144, timeout: 120000 });
   if (!out || !out.explanation) throw new Error("AI가 풀이를 돌려주지 않았어요");
-  const ans = out.correctAnswer ? fixMath(String(out.correctAnswer)) : n.correctAnswer;
-  const okKid = !!n.myAnswer && (out.studentCorrect === true || judgeAnswer({ correctAnswer: ans }, { cands: [n.myAnswer] }));
+  const ans = answerFixed(n) ? n.correctAnswer : out.correctAnswer ? fixMath(String(out.correctAnswer)) : n.correctAnswer;
+  const okKid = !!n.myAnswer && (answerFixed(n) ? judgeAnswer({ correctAnswer: ans }, { cands: [n.myAnswer] }) : (out.studentCorrect === true || judgeAnswer({ correctAnswer: ans }, { cands: [n.myAnswer] })));
   await patchNote(n.id, {
     explanation: String(out.explanation), keyPoint: String(out.keyPoint || ""), needsCoach: false,
     wrongReason: okKid ? "" : String(out.wrongReason || n.wrongReason || ""),
@@ -1429,6 +1531,7 @@ ${n.figureSpec ? "그림 설계도: " + (typeof n.figureSpec === "string" ? n.fi
     ...(okKid ? { myAnswerOk: true } : {}),
     ...(okKid && n.aiJudged && !n.tryCount && n.status !== "mastered" ? { status: "mastered", wrongCount: 0, needsSimilar: false } : {})
   });
+  await checkNote({ ...n, correctAnswer: ans }, ans);
 }
 
 // ───────── 문제 은행 (모두가 함께 쓰는 문제 틀) ─────────
@@ -1512,6 +1615,8 @@ ${FIGURE_GUIDE}
 - 수식은 LaTeX 로 쓰고 $...$ 로 감싼다.
 - explanation 은 학생 눈높이의 단계별 풀이. 다 확인한 최종 풀이만 쓰고, 고쳐 생각한 흔적("아, 다시 보니")은 쓰지 않는다. 풀이 끝의 답과 correctAnswer 가 같아야 한다.
 
+${MATH_RULE}
+
 문제 유형 이름(skill)
 - 원래 문제의 유형을 짧게(20자 안) 이름 붙여 skill 에 쓴다. 예: "분모가 같은 대분수 뺄셈 문장제", "수직선의 분수 읽기"
 - ${skills.length ? "이미 있는 유형 이름: " + skills.map((x) => `"${x}"`).join(", ") + " — 이 중 같은 유형이 있으면 그 이름을 글자 그대로 쓴다." : "아직 정해진 이름이 없으니 새로 짓는다."}
@@ -1536,12 +1641,12 @@ template 은 problems 를 다 쓴 다음에 쓴다. 쓸 수 없는 유형이면 
   const list = Array.isArray(out) ? out : Array.isArray(out?.problems) ? out.problems : out?.problem ? [out.problem] : out?.question ? [out] : [];
   const probs = list.filter((p) => p && p.question).slice(0, count);
   if (!probs.length) throw new Error("AI가 문제를 돌려주지 않았어요: " + JSON.stringify(out).slice(0, 60));
-  let saved = 0, lastErr = null;
-  for (const p of probs) {
+  let saved = 0, lastErr = null, firstOk = true;
+  for (const [pi, p] of probs.entries()) {
     const spec = p.figure && typeof p.figure === "object" && !Array.isArray(p.figure) ? p.figure : null;
     const pic = spec ? drawFigure(spec) : "";
     try {
-      await addNote({
+      const made = await addNote({
         // 파이어베이스는 [[…]] 처럼 겹친 목록을 저장하지 못해서 설계도는 글자로 바꿔 저장
         figure: pic, figureSpec: pic ? JSON.stringify(spec) : "",
         subject: n.subject, unit: n.unit, type: n.type, question: String(p.question),
@@ -1549,6 +1654,7 @@ template 은 problems 를 다 쓴 다음에 쓴다. 쓸 수 없는 유형이면 
         answerFromAI: true, explanation: String(p.explanation ?? ""), source: "ai", parentId: n.id, wrongCount: 0, status: "wrong"
       });
       saved++;
+      if (isSecondary()) { await checkNote(made, made.correctAnswer); if (pi === 0) firstOk = !state.notes.find((x) => x.id === made.id)?.answerUnsure; }
     } catch (e) { lastErr = e; }
   }
   if (!saved && lastErr) throw lastErr;
@@ -1559,7 +1665,7 @@ template 은 problems 를 다 쓴 다음에 쓴다. 쓸 수 없는 유형이면 
   const tpl = out && out.template && typeof out.template === "object" && !Array.isArray(out.template) ? out.template : null;
   const bad = tpl ? checkTemplate(tpl, (a) => judgeAnswer({ correctAnswer: fixMath(String(probs[0].correctAnswer || "")) }, { cands: [a] })) : "틀 없음";
   if (tpl && bad) logErr("문제 틀 검사", bad);
-  if (skill) {
+  if (skill && firstOk) {
     if (tpl && !bad) {
       if (!items.some((b) => b.kind === "tpl" && b.skill === skill)) await bankSave(n, key, skill, "tpl", { ...tpl, keyPoint: n.keyPoint || "" }, probs[0].question);
     } else {
@@ -1595,6 +1701,8 @@ function resumeJobs() {
 // 화면이 꺼져 있거나 다른 앱에 가 있으면, 돌아올 때까지 기다리기
 const whenVisible = () => document.visibilityState === "visible" ? Promise.resolve()
   : new Promise((r) => document.addEventListener("visibilitychange", function f() { if (document.visibilityState === "visible") { document.removeEventListener("visibilitychange", f); r(); } }));
+// 풀이만 다시 쓰기 (해답지 정답·고른 정답에 맞춰)
+const enqueueCoach = (n) => { if (n) enqueueSimilar([{ ...n, needsCoach: true, needsSimilar: false }]); };
 function enqueueSimilar(notes) {
   notes.forEach((n) => { if (!jobs.queue.some((q) => q.id === n.id) && jobs.current !== n.id) jobs.queue.push(n); });
   saveJobs();

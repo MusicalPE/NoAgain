@@ -292,3 +292,5 @@ details.orig summary{cursor:pointer;color:var(--blue)}
 .recog-ans .ok-ans{color:var(--green,#2e9d5b);font-weight:700}
 .recog-edit{margin-top:8px}
 .recog-edit>summary{cursor:pointer;color:var(--blue,#3b6fd8);font-size:16px;padding:4px 0}
+.unsure{margin:8px 0;padding:8px 10px;border:2px dashed #e0a43a;border-radius:8px;background:#fff7e6;font-size:17px}
+.key-bar{margin:10px 0;gap:8px;align-items:center}

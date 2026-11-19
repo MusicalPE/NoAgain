@@ -98,6 +98,7 @@ async def main():
     async def t1():
       pg = await open_page(b, 'http://app/#out')
       step('로그인 화면', await pg.is_visible('#btnLogin'))
+      step('로그인 화면에도 사용 안내 단추', await pg.is_visible('#btnHelp'))
       await pg.close()
     await safe('로그인 화면', t1)
 
@@ -110,6 +111,22 @@ async def main():
       stats = await pg.locator('#stats').inner_text()
       step('로그인 뒤 오답 목록·통계', cnt >= 3 and '전체' in stats, f'문제 {cnt}개')
     await safe('로그인 뒤 오답 목록·통계', t2)
+
+    # 2-1. 사용 안내
+    async def t2a():
+      await pg.click('#btnHelp'); await pg.wait_for_timeout(200)
+      title = await pg.inner_text('#helpBox h2'); n = await pg.locator('#helpBox section').count()
+      demo = await pg.locator('#helpBox a', has_text='지어낸 학급으로 미리 눌러 보기').get_attribute('href')
+      step('사용 안내 창 열기 (항목 9개, 미리보기 링크)', '간략 사용법' in title and n == 9 and demo.endswith('?demo'), f'{title} · 항목 {n}개')
+      await pg.keyboard.press('Escape'); await pg.wait_for_timeout(200)
+      esc_ok = not await pg.is_visible('#help')
+      await pg.click('#btnHelp'); await pg.click('#helpBox [data-help-close]:has-text("확인")'); await pg.wait_for_timeout(150)
+      ok_ok = not await pg.is_visible('#help')
+      await pg.click('#btnHelp'); await pg.mouse.click(5, 5); await pg.wait_for_timeout(150)
+      out_ok = not await pg.is_visible('#help')
+      h = await pg.evaluate("document.getElementById('btnHelp').getBoundingClientRect().height")
+      step('사용 안내 닫기 (Esc·확인·바깥) · 단추 높이 44px 이상', esc_ok and ok_ok and out_ok and h >= 44, f'높이 {h}')
+    await safe('사용 안내', t2a)
 
     # 3. 설정 열고 닫기
     async def t3():
@@ -260,6 +277,8 @@ async def main():
       pd = await open_page(b, 'http://app/?demo', stub=False)
       cnt = await pd.locator('.note').count()
       step('미리보기(?demo) 화면', cnt > 0, f'문제 {cnt}개')
+      await pd.click('#btnHelp'); await pd.wait_for_timeout(200)
+      step('미리보기 안에서는 미리보기 링크 숨김', await pd.locator('#helpBox a', has_text='미리 눌러 보기').count() == 0)
       errs1.extend(pd.errs); await pd.close()
     await safe('미리보기', t11)
 

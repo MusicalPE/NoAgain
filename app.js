@@ -1,6 +1,6 @@
 // 또싫 (오답노트) — 음악적체육인
 // 판 번호: 고칠 때마다 올리기 (sw.js 의 VERSION, index.html 의 app-version 과 같아야 함 → tests/check.mjs 가 확인)
-export const APP_VERSION = "2.0.0";
+export const APP_VERSION = "2.1.0";
 import { FIREBASE_CONFIG, RECAPTCHA_SITE_KEY, AI_MODELS, AI_MODELS_FAST, SUBJECTS, SIMILAR_COUNT, APP_NAME, APP_SUBTITLE, SUBJECT_COLORS } from "./config.js";
 import { initializeApp } from "https://www.gstatic.com/firebasejs/12.18.0/firebase-app.js";
 import { initializeAppCheck, ReCaptchaEnterpriseProvider, getToken as getAppCheckToken } from "https://www.gstatic.com/firebasejs/12.18.0/firebase-app-check.js";
@@ -47,6 +47,57 @@ function typeset(el) {
 }
 function toast(msg, ms = 2200) { const t = $("#toast"); t.textContent = msg; t.classList.remove("hidden"); clearTimeout(toast._t); toast._t = setTimeout(() => t.classList.add("hidden"), ms); }
 function busy(on, msg = "잠시만요") { $("#busyMsg").textContent = msg; $("#busy").classList.toggle("hidden", !on); }
+// ───────── 사용 안내 (간략 사용법) ─────────
+// 실제로 쓰는 순서대로. 단추·메뉴 이름은 화면 글자 그대로.
+const HELP = [
+  ["틀린 문제 찍기 (아이·보호자)", [
+    "아래 \"찍기\"에서 \"카메라로 찍기\"나 \"사진 고르기\"를 눌러요.",
+    "사진에 문제가 여럿이면 \"여러 문제 읽기\", 하나만 고르려면 \"한 문제만 골라 읽기\"를 눌러요.",
+    "사진이 누웠으면 \"↺ 왼쪽으로\"·\"오른쪽으로 ↻\"로 바로 세운 뒤 읽어요."]],
+  ["읽은 문제 확인하고 저장하기 (보호자)", [
+    "틀린 문제에는 미리 체크가 되어 있어요. 잘못 읽은 곳은 \"내용 고치기\"를 펼쳐 고쳐요.",
+    "문제집 해답지가 있으면 \"해답지 사진으로 정답 맞추기\"로 찍어 다시 채점해요.",
+    "\"체크한 문제 저장\"을 누르면 오답 모음에 들어가고, 비슷한 문제도 만들어져요."]],
+  ["오답 모음 보기 (아이)", [
+    "\"오답 모음\"의 네모 \"전체·아직 틀림·자주 틀림·익힘\"을 누르면 그 문제만 보여요.",
+    "오른쪽 과목 띠지와 왼쪽 학년도 띠지로 골라 볼 수 있어요.",
+    "풀이는 \"풀이\"를 눌러 펼쳐요. 틀린 이유와 기억할 점도 함께 있어요."]],
+  ["비슷한 문제로 연습하기 (아이)", [
+    "\"비슷한 문제 2개 더\"를 누르면 숫자만 바뀐 문제가 만들어져요.",
+    "연습 문제는 답을 써야 정답과 풀이가 보여요. 분수는 칸에 쓰고, 어려우면 \"글로 쓰기\"로 바꿔요.",
+    "만드는 동안 다른 화면으로 가도 괜찮아요. 다 되면 알려 줘요."]],
+  ["다시 풀기 (아이)", [
+    "아래 \"다시 풀기\"에서 과목과 문제 수를 고르고 \"시작하기\"를 눌러요.",
+    "한 번 맞히면 익힘으로 옮겨져요. 또 틀리면 자주 틀린 문제가 되고 비슷한 문제 2개가 저절로 생겨요.",
+    "맞힌 문제도 \"익힘으로\"·\"다시 틀림으로\"로 언제든 옮길 수 있어요."]],
+  ["AI 답이 이상할 때 (보호자)", [
+    "\"AI 다시 풀기\"로 한 번 더 풀게 하거나, \"해답지로 정답\"으로 해답지 답을 넣어요.",
+    "아이 답이 맞는데 틀렸다고 하면 \"내 답도 맞는 답이에요\"를 눌러요.",
+    "\"고치기\"에서 정답을 직접 고치면 AI가 다시 바꾸지 않아요."]],
+  ["시험지로 뽑기 (보호자)", [
+    "아래 \"뽑기\"에서 학년도·과목·문제 수를 고르고 \"PDF 만들기\"를 눌러요.",
+    "\"맨 뒤에 정답·풀이 붙이기\"를 켜 두면 채점할 때 편해요."]],
+  ["가족과 함께 쓰기 (보호자)", [
+    "\"설정\"의 \"QR로 초대하기\"를 아이 기기로 찍으면 같은 노트를 함께 써요.",
+    "QR은 하루 동안만 쓸 수 있어요. 다시 필요하면 새로 만들면 돼요."]],
+  ["자주 묻는 것", [
+    "구글 계정으로 로그인해서 따로 외울 비밀번호는 없어요.",
+    "새 학년이 되어도 지울 필요가 없어요. 3월부터 새 학년도 띠지가 저절로 생기고, 지난 문제도 그대로 남아요.",
+    "\"설정\"에 \"AI 키\"가 보이면 무료 체험이 있는 노트예요. 체험이 끝나면 \"AI 키 넣기\"로 내 키를 넣어요."]]
+];
+function openHelp() {
+  const demo = new URLSearchParams(location.search).has("demo");
+  $("#helpBox").innerHTML = `<div class="help-head"><h2>${esc(NAME)} 간략 사용법</h2><button type="button" class="btn sm" data-help-close>닫기</button></div>
+    ${HELP.map(([t, lines], i) => `<section><h3><span class="help-num">${i + 1}</span>${esc(t)}</h3><ul>${lines.map((x) => `<li>${esc(x)}</li>`).join("")}</ul></section>`).join("")}
+    <div class="help-foot">${demo ? "" : `<a class="btn" href="${location.origin}${location.pathname}?demo" target="_blank" rel="noopener">지어낸 학급으로 미리 눌러 보기</a>`}
+    <button type="button" class="btn primary" data-help-close>확인</button></div>`;
+  $("#help").classList.remove("hidden"); $("#helpBox").scrollTop = 0;
+}
+const closeHelp = () => $("#help").classList.add("hidden");
+$("#btnHelp").onclick = openHelp;
+$("#help").addEventListener("click", (e) => { if (e.target.id === "help" || e.target.closest("[data-help-close]")) closeHelp(); });
+document.addEventListener("keydown", (e) => { if (e.key === "Escape" && !$("#help").classList.contains("hidden")) closeHelp(); });
+
 function openModal(html) { $("#modalBox").innerHTML = html; $("#modal").classList.remove("hidden"); typeset($("#modalBox")); }
 function closeModal() { $("#modal").classList.add("hidden"); $("#modalBox").innerHTML = ""; }
 $("#modal").addEventListener("click", (e) => { if (e.target.id === "modal") closeModal(); });
